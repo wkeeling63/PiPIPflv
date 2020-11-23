@@ -10,7 +10,7 @@ SET(CMAKE_EXE_LINKER_FLAGS "-Wl,-L/opt/vc/lib,--no-as-needed")
 
 include_directories(/opt/vc/include)
 include_directories(/usr/include/alsa)
-include_directories(/alsa-utils/include)
+# include_directories(/alsa-utils/include)
 
 # Find the commit hash of the build and pass to the compiler
 execute_process(

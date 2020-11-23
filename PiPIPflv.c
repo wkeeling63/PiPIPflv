@@ -17,7 +17,6 @@
 #include <alsa/asoundlib.h>
 #include <sys/time.h>
 #include <sys/signal.h>
-#include "gettext.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -83,7 +82,6 @@ static snd_pcm_uframes_t chunk_size = 0;
 static snd_pcm_uframes_t buffer_frames = 0;
 static size_t bits_per_sample, bits_per_frame;
 static size_t chunk_bytes;
-static snd_output_t *logerr;
 static int badparm=0;
 static int height = 1080;
 static int width = 1920;
@@ -123,12 +121,6 @@ AVFrame *infrm, *outfrm;
 static void prg_exit(int code);
 
 int64_t audio_samples=0; 
-
-#define error(...) do {\
-	fprintf(stderr, "%s: %s:%d: ", command, __FUNCTION__, __LINE__); \
-	fprintf(stderr, __VA_ARGS__); \
-	putc('\n', stderr); \
-} while (0)
 
 static void prt_hours(int64_t ticks)
 {
@@ -719,26 +711,26 @@ static void set_params(void)
 	err = snd_pcm_hw_params_any(handle, params);
 	if (err < 0) 
 		{
-		error(_("Broken configuration for this PCM: no configurations available"));
+		fprintf(stderr, "Broken configuration for this PCM: no configurations available\n");
 		prg_exit(EXIT_FAILURE);
 		}
 	err = snd_pcm_hw_params_set_access(handle, params, SND_PCM_ACCESS_RW_INTERLEAVED);
 
 	if (err < 0) 
 		{
-		error(_("Access type not available"));
+		fprintf(stderr, "Access type not available\n");
 		prg_exit(EXIT_FAILURE);
 		}
 	err = snd_pcm_hw_params_set_format(handle, params, hwparams.format);
 	if (err < 0) 
 		{
-		error(_("Sample format non available"));
+		fprintf(stderr, "Sample format non available\n");
 		prg_exit(EXIT_FAILURE);
 		}
 	err = snd_pcm_hw_params_set_channels(handle, params, hwparams.channels);
 	if (err < 0) 
 		{
-		error(_("Channels count non available"));
+		fprintf(stderr, "Channels count non available\n");
 		prg_exit(EXIT_FAILURE);
 		}
 
@@ -749,8 +741,7 @@ static void set_params(void)
 	err = snd_pcm_hw_params(handle, params);
 	if (err < 0) 
 		{
-		error(_("Unable to install hw params:"));
-		snd_pcm_hw_params_dump(params, logerr);
+		fprintf(stderr, "Unable to install hw params\n");
 		prg_exit(EXIT_FAILURE);
 		}
 		
@@ -758,7 +749,7 @@ static void set_params(void)
 	snd_pcm_hw_params_get_buffer_size(params, &buffer_size);
 	if (chunk_size == buffer_size) 
 		{
-		error(_("Can't use period equal to buffer size (%lu == %lu)"),
+		fprintf(stderr, "Can't use period equal to buffer size (%lu == %lu)\n", 
 		      chunk_size, buffer_size);
 		prg_exit(EXIT_FAILURE);
 		}
@@ -770,13 +761,13 @@ static void set_params(void)
 	audiobuf = (u_char *)malloc(chunk_bytes);
 	if (audiobuf == NULL) 
 		{
-		error(_("not enough memory"));
+		fprintf(stderr, "not enough memory\n");
 		prg_exit(EXIT_FAILURE);
 		}
 	rlbufs = (u_char *)malloc(chunk_bytes);
 	if (rlbufs == NULL) 
 		{
-		error(_("not enough memory"));
+		fprintf(stderr, "not enough memory\n");
 		prg_exit(EXIT_FAILURE);
 		}
 
@@ -791,7 +782,7 @@ static void xrun(void)
 	snd_pcm_status_alloca(&status);
 	if ((res = snd_pcm_status(handle, status))<0) 
 		{
-		error(_("status error: %s"), snd_strerror(res));
+		fprintf(stderr, "status error: %s\n", snd_strerror(res));
 		prg_exit(EXIT_FAILURE);
 		}
 	
@@ -799,7 +790,7 @@ static void xrun(void)
 		{
 		if ((res = snd_pcm_prepare(handle))<0) 
 			{
-			error(_("xrun: prepare error: %s"), snd_strerror(res));
+			fprintf(stderr, "xrun: prepare error: %s\n", snd_strerror(res));
 			prg_exit(EXIT_FAILURE);
 			}
 		return;		/* ok, data should be accepted again */
@@ -808,17 +799,17 @@ static void xrun(void)
 			{
 			if (stream == SND_PCM_STREAM_CAPTURE) 
 				{
-				fprintf(stderr, _("capture stream format change? attempting recover...\n"));
+				fprintf(stderr, "capture stream format change? attempting recover...\n");
 				if ((res = snd_pcm_prepare(handle))<0) 
 					{
-					error(_("xrun(DRAINING): prepare error: %s"), snd_strerror(res));
+					fprintf(stderr, "xrun(DRAINING): prepare error: %s\n", snd_strerror(res));
 					prg_exit(EXIT_FAILURE);
 					}
 				return;
 				}
 			}
 
-		error(_("read/write error, state = %s"), snd_pcm_state_name(snd_pcm_status_get_state(status)));
+		fprintf(stderr, "read/write error, state = %s\n", snd_pcm_state_name(snd_pcm_status_get_state(status)));
 		prg_exit(EXIT_FAILURE);
 }
 
@@ -830,7 +821,7 @@ static void suspend(void)
 		sleep(1);	/* wait until suspend flag is released */
 	if (res < 0) {
 		if ((res = snd_pcm_prepare(handle)) < 0) {
-			error(_("suspend: prepare error: %s"), snd_strerror(res));
+			fprintf(stderr, "suspend: prepare error: %s\n", snd_strerror(res));
 			prg_exit(EXIT_FAILURE);
 		}
 	}
@@ -870,7 +861,7 @@ static ssize_t pcm_read(u_char *data, u_char **data_out,size_t rcount)
 			} 
 		else if (r < 0) 
 			{
-			error(_("read error: %s"), snd_strerror(r));
+			fprintf(stderr, "read error: %s\n", snd_strerror(r));
 			prg_exit(EXIT_FAILURE);	
 			}
 			if (r > 0) 
@@ -1145,7 +1136,7 @@ static void capture(char *orig_name)
 	state.callback_data.vbuf = (u_char *)malloc(BUFFER_SIZE);
 	if (state.callback_data.vbuf == NULL) 
 		{
-		error(_("not enough memory vbuf"));
+		fprintf(stderr, "not enough memory vbuf\n");
 		prg_exit(EXIT_FAILURE);
 		}
 	sem_t def_mutex;
@@ -1246,6 +1237,10 @@ static void capture(char *orig_name)
 int main(int argc, char *argv[])
 {
 
+	int64_t test1;
+	__off64_t test2;
+	fprintf(stderr, "%d %d", sizeof(test1), sizeof(test2));
+	exit(0);
 	int option_index;
 	static const char short_options[] = "?D:d:h:w:c:q:i:n:v:l:f:";
 	static const struct option long_options[] = {
@@ -1270,7 +1265,6 @@ int main(int argc, char *argv[])
 
 	snd_pcm_info_alloca(&info);
 
-	err = snd_output_stdio_attach(&logerr, stderr, 0);
 	assert(err >= 0);
 
 	command = argv[0];
@@ -1398,7 +1392,7 @@ int main(int argc, char *argv[])
 					write_audio_msg = 0;}
 			break;
 		default:
-			fprintf(stderr, _("Try `%s --help' for more information.\n"), command);
+			fprintf(stderr, "Try `%s --help' for more information.\n", command);
 			return 1;	
 		}
 	}
@@ -1419,7 +1413,7 @@ int main(int argc, char *argv[])
 
 	err = snd_pcm_open(&handle, pcm_name, stream, 0);
 	if (err < 0) {
-		error(_("audio open error: %s"), snd_strerror(err));
+		fprintf(stderr, "audio open error: %s\n", snd_strerror(err));
 		return 1;
 	}
 
@@ -1447,9 +1441,7 @@ int main(int argc, char *argv[])
 	free(audiobuf);
 	free(rlbufs);
 	
-	snd_output_close(logerr);
 	snd_config_update_free_global();
-//	prg_exit(EXIT_SUCCESS);
 	return EXIT_SUCCESS;
 }
 
