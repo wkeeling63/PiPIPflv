@@ -25,9 +25,7 @@
 #include "interface/mmal/mmal_parameters_camera.h"
 
 #include "raspiCamUtilities.h"
-//#include "rcamHelpers.h"
 #include "mmalcomponent.h"
-//#include "rcamCLI.h"
 
 #include <stdbool.h>
 
@@ -660,7 +658,7 @@ MMAL_STATUS_T create_encoder_component(RASPIVID_STATE *state)
          // Continue rather than abort..
       }
    }
-
+   
    //  Enable component
    status = mmal_component_enable(encoder);
 
@@ -818,7 +816,7 @@ void default_status(RASPIVID_STATE *state)
    state->quantisationParameter = 33;
    state->immutableInput = 1;
    state->profile = MMAL_VIDEO_PROFILE_H264_HIGH;
-   state->level = MMAL_VIDEO_LEVEL_H264_4;
+   state->level = MMAL_VIDEO_LEVEL_H264_41;
    state->waitMethod = 0;
    state->bCapturing = 0;
    state->bInlineHeaders = 0;
