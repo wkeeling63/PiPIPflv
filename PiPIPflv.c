@@ -104,7 +104,6 @@ static int write_audio_msg = 0;
 static int64_t start, atime, vtime, wstart, start_time;
 
 static __off64_t pbrec_count = LLONG_MAX; 
-
 char file_name[128];
 char pcm_name[17];
 RASPIVID_STATE *pstate = NULL;
@@ -179,24 +178,14 @@ int init_avapi(char *filename)
 {
 	int status=0;
 	AVDictionary *options = NULL;
-
-// this section has lots of code/comments for tring to fix issue with
-// unable to stream directly to youtube without demuxing/muxing with
-// ffmpeg cli
-	
-//	av_log_set_level(AV_LOG_VERBOSE);
-//	av_log_set_level(AV_LOG_TRACE);
-//	avformat_network_init();
 	
 //  setup format context and io context
-
 	avformat_alloc_output_context2(&flv_frmtctx, NULL, "flv", NULL);
 	if (!flv_frmtctx) 
 		{
 		fprintf(stderr, "Could not allocate output format context\n");
 		return -1;
 		}
-//	flv_frmtctx->pb = io_ctx;
 	if (!(flv_frmtctx->url = av_strdup(filename))) 
 		{
         fprintf(stderr, "Could not copy url.\n");
@@ -226,9 +215,8 @@ int init_avapi(char *filename)
 		}	
 
    	h264_codec_ctx->codec_id = AV_CODEC_ID_H264;
-//	h264_codec_ctx->bit_rate = 400000;
 	h264_codec_ctx->bit_rate = 0;
-	h264_codec_ctx->qmin = 10;
+	h264_codec_ctx->qmin = 20;
 	h264_codec_ctx->qmax = 40;
 	h264_codec_ctx->width = h264_codec_ctx->coded_width = width;
 	h264_codec_ctx->height = h264_codec_ctx->coded_height = height;
@@ -261,19 +249,13 @@ int init_avapi(char *filename)
 //        fprintf(stderr, "Failed to set listen mode for server: %s\n", av_err2str(status));
 //    }
 
-    if ((status = avio_open2(&io_ctx, filename, AVIO_FLAG_WRITE, NULL, &options)))
-//	if ((status = avio_open(&io_ctx, filename, AVIO_FLAG_WRITE)))
+//    if ((status = avio_open2(&io_ctx, filename, AVIO_FLAG_WRITE, NULL, &options)))
+	if ((status = avio_open(&io_ctx, filename, AVIO_FLAG_WRITE)))
 		{
 		fprintf(stderr, "Could not open output file '%s' (error '%s')\n", filename, av_err2str(status));
 		return -1;
 		}
         
-//	status = avcodec_parameters_from_context(h264_video_strm->codecpar, h264_codec_ctx);
-//	if (status < 0) 
-//		{
-//		fprintf(stderr, "Could not initialize stream parameters\n");
-//		return -1;
-//		}
 	flv_frmtctx->pb = io_ctx;
 		
 //  setup AAC codec and stream context
@@ -364,18 +346,16 @@ int init_avapi(char *filename)
 		}
 
 //  write flv header 
-//	flv_frmtctx->start_time_realtime=0;  // 0 should user system clock
-	flv_frmtctx->start_time_realtime=get_microseconds64();
-	status = avformat_init_output(flv_frmtctx, NULL);  // null if AVDictionary is unneeded????
-	fprintf(stderr, "init output status %d\n", status);
+	flv_frmtctx->start_time_realtime=get_microseconds64();  // flv_frmtctx->start_time_realtime=0;  // 0 should user system clock
+/*	status = avformat_init_output(flv_frmtctx, NULL);  // null if AVDictionary is unneeded????
 	if (status < 0)
 		{
 		fprintf(stderr, "Write ouput header failed! STATUS %d\n", status);
 		return -1;
-		}
+		} */
 
 	status = avformat_write_header(flv_frmtctx, NULL);  // null if AVDictionary is unneeded????
-	fprintf(stderr, "header status %d\n", status);
+//	fprintf(stderr, "header status %d\n", status);
 	if (status < 0)
 		{
 		fprintf(stderr, "Write ouput header failed! STATUS %d\n", status);
@@ -449,7 +429,6 @@ int close_avapi(char *filename)
 	if (flv_frmtctx)
 		{
 		if (io_ctx->seekable == 1)
-//		if ((strncmp("file:", filename, 5))) 
 			{
 			status = av_write_trailer(flv_frmtctx);  
 			if (status < 0) {fprintf(stderr, "Write ouput trailer failed! STATUS %d\n", status);}
@@ -532,6 +511,18 @@ static void encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buf
 						pData->vbuf_ptr=0;
 						}
 					packet->dts = packet->pts = pts/1000;
+					if (buffer->flags & MMAL_BUFFER_HEADER_FLAG_CONFIG)
+						{
+						if (packet->side_data) {
+							av_packet_free_side_data(packet);}
+						uint8_t *side_data = NULL;
+						side_data = av_packet_new_side_data(packet, AV_PKT_DATA_NEW_EXTRADATA, buffer->length);
+						if (!side_data) {
+							fprintf(stderr, "%s\n", AVERROR(ENOMEM));
+							prg_exit(EXIT_FAILURE);
+							}
+						memcpy(side_data, buffer->data+buffer->offset, buffer->length);
+						}
 					wstart = get_microseconds64();
 					sem_wait(pData->mutex);
 					status=av_write_frame(flv_frmtctx, packet);
@@ -1103,6 +1094,8 @@ static void capture(char *orig_name)
 
 	/* setup sound hardware */
 	set_params();
+	
+	// init ffmpeg
 	status=init_avapi(name);
 
 	bcm_host_init(); 
@@ -1125,7 +1118,9 @@ static void capture(char *orig_name)
 	state.quantisationParameter = quantisation;
 
 	// param parsing was here in raspivid but done before state is allocated so needs to hold in temp vars then move to state here
-	status = setup_components(&state);	 
+	
+	// init components 
+	status = setup_components(&state);	
 	state.callback_data.pstate = &state;
 	state.callback_data.abort_ptr = &abort_flg;
 	state.callback_data.stime = &start_time;
@@ -1225,6 +1220,7 @@ static void capture(char *orig_name)
 		if (encode_and_write(bufs, 1, &def_mutex) < 0) 
 			{
 			fprintf(stderr, "encode/write last failed!\n");
+			close_components(&state);
 			close_avapi(name);
 			prg_exit(EXIT_FAILURE);
 			}
@@ -1237,10 +1233,6 @@ static void capture(char *orig_name)
 int main(int argc, char *argv[])
 {
 
-	int64_t test1;
-	__off64_t test2;
-	fprintf(stderr, "%d %d", sizeof(test1), sizeof(test2));
-	exit(0);
 	int option_index;
 	static const char short_options[] = "?D:d:h:w:c:q:i:n:v:l:f:";
 	static const struct option long_options[] = {
