@@ -64,9 +64,9 @@
 
 #define DEFAULT_FORMAT		SND_PCM_FORMAT_S32_LE
 #define DEFAULT_SPEED 		44100
-#define BUFFER_SIZE		262144
+#define BUFFER_SIZE			262144
 #define DEFAULT_CHANNELS_IN	2
-#define DEFAULT_FPS		25
+#define DEFAULT_FPS			25
 
 static char *command;
 static snd_pcm_t *handle;
@@ -95,15 +95,16 @@ static int o_flip_h = MMAL_FALSE;
 static int o_flip_v = MMAL_TRUE;
 static int camera = 1;
 static int intraframe = 30;
-static int quantisation = 0;
+static int initQ = 0, minQ = 20, maxQ = 40;
 static int abort_flg = 0;
 static int channel_num = 1;
 static int write_video_msg = 0;
 static int write_audio_msg = 0;
 
-static int64_t start, atime, vtime, wstart, start_time;
+static int64_t start, atime, vtime, wstart, start_time, write_target_time, write_variance = 0, pbrec_count = LLONG_MAX;
 
-static __off64_t pbrec_count = LLONG_MAX; 
+//static __off64_t pbrec_count = LLONG_MAX; 
+//static int64_t pbrec_count = LLONG_MAX; 
 char file_name[128];
 char pcm_name[17];
 RASPIVID_STATE *pstate = NULL;
@@ -156,22 +157,22 @@ static void usage(char *command)
 "    for PIPE loc is 1 for STDOUT\n"
 "\n"
 "Program paramaters:\n"
-"-?, --help              help\n"
-"-d, --duration=#        interrupt after # seconds - defaults to forever\n"
-"-v, --verbose=#         write info messages to STDERR 1=video, 2=audio or 3=both\n"
+"-?, --help              	help\n"
+"-d, --duration=#        	interrupt after # seconds - defaults to forever\n"
+"-v, --verbose=#         	write info messages to STDERR 1=video, 2=audio or 3=both\n"
 "Audio paramaters:\n"
-"-D, --device=NAME       select PCM by name\n"  
-"-n, --number=#          number of audio channels\n"
+"-D, --device=NAME       	select PCM by name\n"  
+"-n, --number=#          	number of audio channels\n"
 "Camera paramaters:\n"
-"-c, --camera=#          main camera # - defaults to 1\n"
-"-h, --height=#          height #:# pixels - defaults to max 1080 if 2nd number is omitted 2nd camera is 1/2 height\n"
-"-w, --width=#        	 width #:# pixels - defaults to max 1920 if 2nd number is omitted 2nd camera is 1/2 height\n"
-"-l, --location=#:#      2nd camera PIP location h:v pixel camera # - defaults to lower left\n"
-"-f, --flip=h.v:h.v      flip image of camera - example 1.1:0.1 flips the main camera vertically & horizontally\n"
-"                        and 2nd camera vertically\n"
+"-c, --camera=#          	main camera # - defaults to 1\n"
+"-h, --height=#          	height #:# pixels - defaults to max 1080 if 2nd number is omitted 2nd camera is 1/2 height\n"
+"-w, --width=#        	 	width #:# pixels - defaults to max 1920 if 2nd number is omitted 2nd camera is 1/2 height\n"
+"-l, --location=#:#      	2nd camera PIP location h:v pixel camera # - defaults to lower left\n"
+"-f, --flip=h.v:h.v      	flip image of camera - example 1.1:0.1 flips the main camera vertically & horizontally\n"
+"                        	and 2nd camera vertically\n"
 "Encoder paramaters:\n"
-"-q, --quantisation=#    quantisation parameter\n"
-"-i, --intraframe=#      intra key frame rate # frame\n"  )   
+"-q, --quantisation=#:#:#	quantisation Init:Min:Max parameters\n"
+"-i, --intraframe=#      	intra key frame rate # frame\n"  )   
 		, command);
 } 
 int init_avapi(char *filename)
@@ -242,15 +243,15 @@ int init_avapi(char *filename)
 	if (flv_frmtctx->oformat->flags & AVFMT_GLOBALHEADER) { // Some container formats (like MP4) require global headers to be present.
 		h264_codec_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;}
 		
-//	if ((status = av_dict_set(&options, "rtmp_live", "live", 0)) < 0) {
-//        fprintf(stderr, "Failed to set listen mode for server: %s\n", av_err2str(status));
-//    }
+	if ((status = av_dict_set(&options, "rtmp_live", "live", 0)) < 0) {
+        fprintf(stderr, "Failed to set listen mode for server: %s\n", av_err2str(status));
+    }
 //	if ((status = av_dict_set(&options, "rtmp_conn", NULL, 0)) < 0) {
 //        fprintf(stderr, "Failed to set listen mode for server: %s\n", av_err2str(status));
 //    }
 
-//    if ((status = avio_open2(&io_ctx, filename, AVIO_FLAG_WRITE, NULL, &options)))
-	if ((status = avio_open(&io_ctx, filename, AVIO_FLAG_WRITE)))
+    if ((status = avio_open2(&io_ctx, filename, AVIO_FLAG_WRITE, NULL, &options)))
+//	if ((status = avio_open(&io_ctx, filename, AVIO_FLAG_WRITE)))
 		{
 		fprintf(stderr, "Could not open output file '%s' (error '%s')\n", filename, av_err2str(status));
 		return -1;
@@ -347,15 +348,14 @@ int init_avapi(char *filename)
 
 //  write flv header 
 	flv_frmtctx->start_time_realtime=get_microseconds64();  // flv_frmtctx->start_time_realtime=0;  // 0 should user system clock
-/*	status = avformat_init_output(flv_frmtctx, NULL);  // null if AVDictionary is unneeded????
+	status = avformat_init_output(flv_frmtctx, &options);  // null if AVDictionary is unneeded????
 	if (status < 0)
 		{
 		fprintf(stderr, "Write ouput header failed! STATUS %d\n", status);
 		return -1;
-		} */
+		} 
 
-	status = avformat_write_header(flv_frmtctx, NULL);  // null if AVDictionary is unneeded????
-//	fprintf(stderr, "header status %d\n", status);
+	status = avformat_write_header(flv_frmtctx, &options);  // null if AVDictionary is unneeded????
 	if (status < 0)
 		{
 		fprintf(stderr, "Write ouput header failed! STATUS %d\n", status);
@@ -456,6 +456,7 @@ static void encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buf
 	
 	PORT_USERDATA *pData = (PORT_USERDATA *)port->userdata;
 	int *ap = pData->abort_ptr;
+//	if (buffer->flags & MMAL_BUFFER_HEADER_FLAG_CONFIG) fprintf(stderr, "config buffer\n");
 //	fprintf(stderr, "buffer size %d %d\n", buffer->length, buffer->flags);
 //	fprintf(stderr, "Callback %lld ",  get_microseconds64()/1000-start_time);
 	if (*ap) 
@@ -538,6 +539,9 @@ static void encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buf
 						fprintf(stderr, " Video %8lld \r", framecnt);
 						}
 					vtime = etime;
+					*pData->wvariance = *pData->wvariance + (etime - wstart)-*pData->wtargettime;
+//					fprintf(stderr, "%lld %lld\n", *pData->wvariance, *pData->wtargettime);
+//					fprintf(stderr, "%lld %lld\n", (etime - wstart), ((etime - wstart)-20000));
 					if (status)
 						{
 						fprintf(stderr, "frame write error or flush %d\n", status);
@@ -896,9 +900,11 @@ static ssize_t pcm_read(u_char *data, u_char **data_out,size_t rcount)
 }
 
 /* calculate the data count to read from/to dsp */
-static __off64_t calc_count(void)
+//static __off64_t calc_count(void)
+static int64_t calc_count(void)
 {
-	__off64_t count;
+//	__off64_t count;
+	int64_t count;
 
 	if (timelimit == 0) 
 		{
@@ -907,7 +913,8 @@ static __off64_t calc_count(void)
 	else 
 		{
 		count = snd_pcm_format_size(hwparams.format, hwparams.rate * hwparams.channels);
-		count *= (__off64_t)timelimit;
+//		count *= (__off64_t)timelimit;
+		count *= (int64_t)timelimit;
 		}
 	return count < pbrec_count ? count : pbrec_count;
 }
@@ -1084,7 +1091,8 @@ static void capture(char *orig_name)
 	video_packet.pos=-1;
 
 	char *name = orig_name;	/* current filename */
-	__off64_t count;		/* number of bytes to capture */
+//	__off64_t count;		/* number of bytes to capture */
+	int64_t count;		/* number of bytes to capture */
 	int status=0;
 
 	/* get number of bytes to capture */
@@ -1115,18 +1123,26 @@ static void capture(char *orig_name)
 	state.common_settings.cameraNum = camera;
 	state.camera_parameters.vflip = m_flip_v;
 	state.camera_parameters.hflip = m_flip_h;
-	state.quantisationParameter = quantisation;
+	state.quantisationParameter = initQ;
+	state.quantisationMin = minQ;
+	state.quantisationMax = maxQ;
 
 	// param parsing was here in raspivid but done before state is allocated so needs to hold in temp vars then move to state here
 	
 	// init components 
-	status = setup_components(&state);	
+	status = setup_components(&state);
+		
 	state.callback_data.pstate = &state;
 	state.callback_data.abort_ptr = &abort_flg;
 	state.callback_data.stime = &start_time;
+	state.callback_data.wtargettime = &write_target_time;
+	state.callback_data.wvariance = &write_variance;
 	state.callback_data.fctx = flv_frmtctx;
 	state.callback_data.vpckt=&video_packet;
 	state.callback_data.vbuf_ptr=0;
+	
+	//calc write target
+	write_target_time = 250000/VIDEO_FRAME_RATE_NUM;
 
 	state.callback_data.vbuf = (u_char *)malloc(BUFFER_SIZE);
 	if (state.callback_data.vbuf == NULL) 
@@ -1166,7 +1182,7 @@ static void capture(char *orig_name)
 
 	if (count > 2147483648LL)
 		count = 2147483648LL;
-
+		
 	do 
 		{
 
@@ -1195,9 +1211,12 @@ static void capture(char *orig_name)
 			stop_time = 9223372036854775807LL;
 			}
 		
+		int once = 1;	
+		
 		while (stop_time > get_microseconds64())
 			{
-			size_t c = (count <= (__off64_t)chunk_bytes) ? (size_t)count : chunk_bytes;
+//			size_t c = (count <= (__off64_t)chunk_bytes) ? (size_t)count : chunk_bytes;
+			size_t c = (count <= (int64_t)chunk_bytes) ? (size_t)count : chunk_bytes;
 			size_t f = c * 8 / bits_per_frame;
 
 			if (pcm_read(audiobuf, bufs, f) != f)
@@ -1208,7 +1227,36 @@ static void capture(char *orig_name)
 				close_avapi(name);
 				prg_exit(EXIT_FAILURE);
 				}
-
+			if (write_variance > (write_target_time*VIDEO_FRAME_RATE_NUM*4) || write_variance < (write_target_time*VIDEO_FRAME_RATE_NUM*-4))
+				{
+				MMAL_PARAMETER_UINT32_T param = {{ MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT, sizeof(param)}, 0};
+				status = mmal_port_parameter_get(state.encoder_component->output[0], &param.hdr);
+				if (status != MMAL_SUCCESS) {vcos_log_error("Unable to get current QP");}
+				if (write_variance < 0 && param.value > state.quantisationMin)
+					{
+					param.value--;
+					fprintf(stderr, "new q value %d\n", param.value);
+					status = mmal_port_parameter_set(state.encoder_component->output[0], &param.hdr);
+					if (status != MMAL_SUCCESS) {vcos_log_error("Unable to reset QP");}
+					write_variance = 0;
+					}
+				else 
+					{
+					if (write_variance > 0 && param.value < state.quantisationMax)
+						{
+						param.value++;
+						fprintf(stderr, "new q value %d\n", param.value);
+						status = mmal_port_parameter_set(state.encoder_component->output[0], &param.hdr);
+						if (status != MMAL_SUCCESS) {vcos_log_error("Unable to reset QP");}
+						write_variance = 0;
+						}
+					else
+						{
+						write_variance = 0;
+//						fprintf(stderr, "q value at limit %d\n", param.value);
+						}
+					}
+				}
 			count -= c;
 			if (abort_flg) {count = 0; fprintf(stderr, "abort\n");}
 			}
@@ -1355,10 +1403,27 @@ int main(int argc, char *argv[])
 				badparm=1;}
 			break;
 		case 'q':
-			quantisation = strtol(optarg, NULL, 0);
-			if (quantisation > 40 || quantisation < 20) {
-				fprintf(stderr, "quantisation parameter must be 20 to 40 %d\n", quantisation);
-				badparm=1;}
+			num_parms = sscanf(optarg, "%d:%d:%d", &initQ,&minQ, &maxQ);
+            switch(num_parms) {
+			case EOF:
+				fprintf(stderr, "filp sscanf failed\n");
+				badparm=1;
+				break;
+			case 1:
+				if (initQ > 40 || initQ < 20) {
+					fprintf(stderr, "quantisation parameters must be 20 to 40 %d\n", initQ);
+					badparm=1;}
+				break;
+			case 2:
+				if (initQ > 40 || initQ < 20 || minQ > 40 || minQ < 20) {
+					fprintf(stderr, "quantisation parameters must be 20 to 40 %d:%d\n", initQ, minQ);
+					badparm=1;}
+				break;
+			case 3:
+				if (initQ > 40 || initQ < 20 || minQ > 40 || minQ < 20|| maxQ > 40 || maxQ < 20) {
+					fprintf(stderr, "quantisation parameters must be 20 to 40 %d:%d:%d\n", initQ, minQ, maxQ);
+					badparm=1;}
+				break;}
 			break;
 		case 'n':
 			channel_num = strtol(optarg, NULL, 0);
@@ -1398,7 +1463,9 @@ int main(int argc, char *argv[])
 	if (loc_x >= (width-ovl_width) || loc_y >= height-ovl_height) {
 		fprintf(stderr, "overlay window must be fall withing the main window\n");
 		return 1;}
-	
+	if (minQ > initQ || minQ > maxQ || maxQ < initQ || maxQ < minQ) {
+		fprintf(stderr, "quantalizer values not logical\n");
+		return 1;}
 	if (loc_x == -1) {
 		loc_x = 0;
 		loc_y = height-ovl_height;}

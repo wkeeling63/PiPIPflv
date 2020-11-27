@@ -586,7 +586,7 @@ MMAL_STATUS_T create_encoder_component(RASPIVID_STATE *state)
          goto error;
       }
 
-      MMAL_PARAMETER_UINT32_T param2 = {{ MMAL_PARAMETER_VIDEO_ENCODE_MIN_QUANT, sizeof(param)}, state->quantisationParameter};
+      MMAL_PARAMETER_UINT32_T param2 = {{ MMAL_PARAMETER_VIDEO_ENCODE_MIN_QUANT, sizeof(param)}, state->quantisationMin};
       status = mmal_port_parameter_set(encoder_output, &param2.hdr);
       if (status != MMAL_SUCCESS)
       {
@@ -594,7 +594,7 @@ MMAL_STATUS_T create_encoder_component(RASPIVID_STATE *state)
          goto error;
       }
 
-      MMAL_PARAMETER_UINT32_T param3 = {{ MMAL_PARAMETER_VIDEO_ENCODE_MAX_QUANT, sizeof(param)}, state->quantisationParameter};
+      MMAL_PARAMETER_UINT32_T param3 = {{ MMAL_PARAMETER_VIDEO_ENCODE_MAX_QUANT, sizeof(param)}, state->quantisationMax};
       status = mmal_port_parameter_set(encoder_output, &param3.hdr);
       if (status != MMAL_SUCCESS)
       {
@@ -810,10 +810,14 @@ void default_status(RASPIVID_STATE *state)
    state->common_settings.width = 1920;    
    state->common_settings.height = 1080;     
    state->encoding = MMAL_ENCODING_H264;
-   state->bitrate = 17000000; // This is a decent default bitrate for 1080p
+   state->bitrate = 0; // 0 for variable bit rate
+//   state->bitrate = 17000000; // This is a decent default bitrate for 1080p
+//   state->bitrate = 34000000; // This is a decent default bitrate for 1080p
    state->framerate = VIDEO_FRAME_RATE_NUM;
    state->intraperiod = 15;    // Not set
-   state->quantisationParameter = 33;
+   state->quantisationParameter = 30;
+   state->quantisationMin = 20;
+   state->quantisationMax = 40;
    state->immutableInput = 1;
    state->profile = MMAL_VIDEO_PROFILE_H264_HIGH;
    state->level = MMAL_VIDEO_LEVEL_H264_41;
