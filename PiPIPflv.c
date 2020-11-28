@@ -66,7 +66,6 @@
 #define DEFAULT_SPEED 		44100
 #define BUFFER_SIZE			262144
 #define DEFAULT_CHANNELS_IN	2
-#define DEFAULT_FPS			25
 
 static char *command;
 static snd_pcm_t *handle;
@@ -100,11 +99,10 @@ static int abort_flg = 0;
 static int channel_num = 1;
 static int write_video_msg = 0;
 static int write_audio_msg = 0;
+static int fps = 25;
 
 static int64_t start, atime, vtime, wstart, start_time, write_target_time, write_variance = 0, pbrec_count = LLONG_MAX;
 
-//static __off64_t pbrec_count = LLONG_MAX; 
-//static int64_t pbrec_count = LLONG_MAX; 
 char file_name[128];
 char pcm_name[17];
 RASPIVID_STATE *pstate = NULL;
@@ -170,6 +168,7 @@ static void usage(char *command)
 "-l, --location=#:#      	2nd camera PIP location h:v pixel camera # - defaults to lower left\n"
 "-f, --flip=h.v:h.v      	flip image of camera - example 1.1:0.1 flips the main camera vertically & horizontally\n"
 "                        	and 2nd camera vertically\n"
+"-F, --fps=#				frames per second #\n"
 "Encoder paramaters:\n"
 "-q, --quantisation=#:#:#	quantisation Init:Min:Max parameters\n"
 "-i, --intraframe=#      	intra key frame rate # frame\n"  )   
@@ -221,7 +220,7 @@ int init_avapi(char *filename)
 	h264_codec_ctx->qmax = 40;
 	h264_codec_ctx->width = h264_codec_ctx->coded_width = width;
 	h264_codec_ctx->height = h264_codec_ctx->coded_height = height;
-	h264_codec_ctx->sample_rate    = DEFAULT_FPS;
+	h264_codec_ctx->sample_rate    = fps;
 	h264_codec_ctx->gop_size      = intraframe;                  
 	h264_codec_ctx->pix_fmt       = AV_PIX_FMT_YUV420P; 
 	
@@ -233,25 +232,20 @@ int init_avapi(char *filename)
 		}
     
 	
-	h264_video_strm->time_base.den = DEFAULT_FPS;   // Set the sample rate for the container
+	h264_video_strm->time_base.den = fps;   // Set the sample rate for the container
 	h264_video_strm->time_base.num = 1;
-	h264_video_strm->avg_frame_rate.num = DEFAULT_FPS;   // Set the sample rate for the container
+	h264_video_strm->avg_frame_rate.num = fps;   // Set the sample rate for the container
 	h264_video_strm->avg_frame_rate.den = 1;
-	h264_video_strm->r_frame_rate.num = DEFAULT_FPS;   // Set the sample rate for the container
+	h264_video_strm->r_frame_rate.num = fps;   // Set the sample rate for the container
 	h264_video_strm->r_frame_rate.den = 1;
 
 	if (flv_frmtctx->oformat->flags & AVFMT_GLOBALHEADER) { // Some container formats (like MP4) require global headers to be present.
 		h264_codec_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;}
 		
 	if ((status = av_dict_set(&options, "rtmp_live", "live", 0)) < 0) {
-        fprintf(stderr, "Failed to set listen mode for server: %s\n", av_err2str(status));
-    }
-//	if ((status = av_dict_set(&options, "rtmp_conn", NULL, 0)) < 0) {
-//        fprintf(stderr, "Failed to set listen mode for server: %s\n", av_err2str(status));
-//    }
+        fprintf(stderr, "rtmp live option: %s\n", av_err2str(status));}
 
     if ((status = avio_open2(&io_ctx, filename, AVIO_FLAG_WRITE, NULL, &options)))
-//	if ((status = avio_open(&io_ctx, filename, AVIO_FLAG_WRITE)))
 		{
 		fprintf(stderr, "Could not open output file '%s' (error '%s')\n", filename, av_err2str(status));
 		return -1;
@@ -305,7 +299,7 @@ int init_avapi(char *filename)
 		return -1;
 		}
 
-  	av_dump_format(flv_frmtctx, 0, "stderr", 1);
+//  	av_dump_format(flv_frmtctx, 0, "stderr", 1);
 
 //  setup RAW codec and context
 	raw_codec = avcodec_find_encoder(AV_CODEC_ID_PCM_S32LE_PLANAR);
@@ -900,10 +894,8 @@ static ssize_t pcm_read(u_char *data, u_char **data_out,size_t rcount)
 }
 
 /* calculate the data count to read from/to dsp */
-//static __off64_t calc_count(void)
 static int64_t calc_count(void)
 {
-//	__off64_t count;
 	int64_t count;
 
 	if (timelimit == 0) 
@@ -913,7 +905,6 @@ static int64_t calc_count(void)
 	else 
 		{
 		count = snd_pcm_format_size(hwparams.format, hwparams.rate * hwparams.channels);
-//		count *= (__off64_t)timelimit;
 		count *= (int64_t)timelimit;
 		}
 	return count < pbrec_count ? count : pbrec_count;
@@ -1019,11 +1010,14 @@ MMAL_STATUS_T setup_components(RASPIVID_STATE *state)
 void close_components(RASPIVID_STATE *state)
 {
     // Disable all our ports that are not handled by connections
-    check_disable_port(state->camera_component->output[MMAL_CAMERA_CAPTURE_PORT]); 
-    check_disable_port(state->camera2_component->output[MMAL_CAMERA_CAPTURE_PORT]);  
-       
+    
 	check_disable_port(state->encoder_component->output[0]);
-
+    
+    check_disable_port(state->camera_component->output[MMAL_CAMERA_PREVIEW_PORT]);  
+    check_disable_port(state->camera_component->output[MMAL_CAMERA_CAPTURE_PORT]);
+    check_disable_port(state->camera2_component->output[MMAL_CAMERA_PREVIEW_PORT]); 
+    check_disable_port(state->camera2_component->output[MMAL_CAMERA_CAPTURE_PORT]);  
+          
 	if (state->encoder_connection)
 		mmal_connection_destroy(state->encoder_connection);
 	if (state->hvs_main_connection)
@@ -1091,7 +1085,6 @@ static void capture(char *orig_name)
 	video_packet.pos=-1;
 
 	char *name = orig_name;	/* current filename */
-//	__off64_t count;		/* number of bytes to capture */
 	int64_t count;		/* number of bytes to capture */
 	int status=0;
 
@@ -1103,7 +1096,7 @@ static void capture(char *orig_name)
 	/* setup sound hardware */
 	set_params();
 	
-	// init ffmpeg
+	// init ffmpeg  
 	status=init_avapi(name);
 
 	bcm_host_init(); 
@@ -1120,6 +1113,7 @@ static void capture(char *orig_name)
 	state.common_settings.ovl_x = loc_x;
 	state.common_settings.ovl_y = loc_y;
 	state.intraperiod = intraframe;
+	state.framerate = fps;
 	state.common_settings.cameraNum = camera;
 	state.camera_parameters.vflip = m_flip_v;
 	state.camera_parameters.hflip = m_flip_h;
@@ -1142,7 +1136,7 @@ static void capture(char *orig_name)
 	state.callback_data.vbuf_ptr=0;
 	
 	//calc write target
-	write_target_time = 250000/VIDEO_FRAME_RATE_NUM;
+	write_target_time = 250000/fps;
 
 	state.callback_data.vbuf = (u_char *)malloc(BUFFER_SIZE);
 	if (state.callback_data.vbuf == NULL) 
@@ -1215,7 +1209,6 @@ static void capture(char *orig_name)
 		
 		while (stop_time > get_microseconds64())
 			{
-//			size_t c = (count <= (__off64_t)chunk_bytes) ? (size_t)count : chunk_bytes;
 			size_t c = (count <= (int64_t)chunk_bytes) ? (size_t)count : chunk_bytes;
 			size_t f = c * 8 / bits_per_frame;
 
@@ -1227,7 +1220,7 @@ static void capture(char *orig_name)
 				close_avapi(name);
 				prg_exit(EXIT_FAILURE);
 				}
-			if (write_variance > (write_target_time*VIDEO_FRAME_RATE_NUM*4) || write_variance < (write_target_time*VIDEO_FRAME_RATE_NUM*-4))
+			if (write_variance > (write_target_time*fps*4) || write_variance < (write_target_time*fps*-4))
 				{
 				MMAL_PARAMETER_UINT32_T param = {{ MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT, sizeof(param)}, 0};
 				status = mmal_port_parameter_get(state.encoder_component->output[0], &param.hdr);
@@ -1245,7 +1238,7 @@ static void capture(char *orig_name)
 					if (write_variance > 0 && param.value < state.quantisationMax)
 						{
 						param.value++;
-						fprintf(stderr, "new q value %d\n", param.value);
+						fprintf(stderr, "New q value %d\n", param.value);
 						status = mmal_port_parameter_set(state.encoder_component->output[0], &param.hdr);
 						if (status != MMAL_SUCCESS) {vcos_log_error("Unable to reset QP");}
 						write_variance = 0;
@@ -1253,7 +1246,6 @@ static void capture(char *orig_name)
 					else
 						{
 						write_variance = 0;
-//						fprintf(stderr, "q value at limit %d\n", param.value);
 						}
 					}
 				}
@@ -1282,7 +1274,7 @@ int main(int argc, char *argv[])
 {
 
 	int option_index;
-	static const char short_options[] = "?D:d:h:w:c:q:i:n:v:l:f:";
+	static const char short_options[] = "?D:d:h:w:c:q:i:n:v:l:f:F:";
 	static const struct option long_options[] = {
 		{"help", 0, 0, '?'},
 		{"device", 1, 0, 'D'},
@@ -1294,8 +1286,9 @@ int main(int argc, char *argv[])
 		{"intraframe", 1, 0, 'i'},
 		{"number", 1, 0, 'n'},
 		{"verbose", 1, 0, 'v'},
-		{"location", 1, 0, 'v'},
-		{"flip", 1, 0, 'v'},
+		{"location", 1, 0, 'l'},
+		{"flip", 1, 0, 'f'},
+		{"fps", 1, 0, 'F'},
 		{0, 0, 0, 0}
 		};
 
@@ -1435,6 +1428,12 @@ int main(int argc, char *argv[])
 			intraframe = strtol(optarg, NULL, 0);
 			if (intraframe > 60) {
 				fprintf(stderr, "Intra frame rate should be < 60  %d\n", intraframe);
+				badparm=1;}
+			break;
+		case 'F':
+			fps = strtol(optarg, NULL, 0);
+			if (fps < 0 || fps > 31) {
+				fprintf(stderr, "frames per second must be > 0 and < 31 %d\n", fps);
 				badparm=1;}
 			break;
 		case 'v':
