@@ -806,14 +806,12 @@ void default_status(RASPIVID_STATE *state)
    state->common_settings.sensor_mode = 5;
 
    // Now set anything non-zero
-   state->timeout = -1; // replaced with 5000ms later if unset
+   state->timeout = -1; 
    state->common_settings.width = 1920;    
    state->common_settings.height = 1080;     
    state->encoding = MMAL_ENCODING_H264;
    state->bitrate = 0; // 0 for variable bit rate
-//   state->bitrate = 17000000; // This is a decent default bitrate for 1080p
-//   state->bitrate = 34000000; // This is a decent default bitrate for 1080p
-   state->framerate = VIDEO_FRAME_RATE_NUM;
+//   state->framerate = VIDEO_FRAME_RATE_NUM;
    state->intraperiod = 15;    // Not set
    state->quantisationParameter = 30;
    state->quantisationMin = 20;
