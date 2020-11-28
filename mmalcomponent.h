@@ -42,6 +42,8 @@ typedef struct
    int vbuf_ptr;
    sem_t *mutex;   
    int64_t *stime;
+   int64_t *wtargettime;
+   int64_t *wvariance;
       
 } PORT_USERDATA;
 
@@ -54,6 +56,8 @@ struct RASPIVID_STATE_S
    int framerate;                      /// Requested frame rate (fps)
    int intraperiod;                    /// Intra-refresh period (key frame rate)
    int quantisationParameter;          /// Quantisation parameter - quality. Set bitrate 0 and set this for variable bitrate
+   int quantisationMin;  
+   int quantisationMax;  
    int bInlineHeaders;                  /// Insert inline headers to stream (SPS, PPS)
    int immutableInput;                 /// Flag to specify whether encoder works in place or creates a new buffer. Result is preview can display either
                                        /// the camera output or the encoder output (with compression artifacts)
