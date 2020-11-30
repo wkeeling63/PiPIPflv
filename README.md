@@ -12,6 +12,10 @@ and both streams are added to flash video container by FFMPEG api.
 
 Install: cmake . 
 
+Software required:
+FFMPEG library sudo apt-get install ffmpeg
+bcm2835 library http://www.airspayce.com/mikem/bcm2835/index.html
+
 Hardware required:
 
 2 Camera Raspberry Pi Compute Module 
