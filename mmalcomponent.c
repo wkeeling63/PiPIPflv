@@ -29,11 +29,6 @@
 
 #include <stdbool.h>
 
-// Max bitrate we allow for recording
-const int MAX_BITRATE_MJPEG = 25000000; // 25Mbits/s
-const int MAX_BITRATE_LEVEL4 = 25000000; // 25Mbits/s
-const int MAX_BITRATE_LEVEL42 = 62500000; // 62.5Mbits/s
-
 MMAL_STATUS_T create_camera_component(RASPIVID_STATE *state)
 {
    MMAL_COMPONENT_T *camera = 0;
@@ -121,34 +116,6 @@ MMAL_STATUS_T create_camera_component(RASPIVID_STATE *state)
 
    format->encoding = MMAL_ENCODING_OPAQUE;
    format->encoding_variant = MMAL_ENCODING_I420;
-
-   if(state->camera_parameters.shutter_speed > 6000000)
-   {
-      MMAL_PARAMETER_FPS_RANGE_T fps_range = {{MMAL_PARAMETER_FPS_RANGE, sizeof(fps_range)},
-         { 50, 1000 }, {166, 1000}
-      };
-      mmal_port_parameter_set(preview_port, &fps_range.hdr);
-   }
-   else if(state->camera_parameters.shutter_speed > 1000000)
-   {
-      MMAL_PARAMETER_FPS_RANGE_T fps_range = {{MMAL_PARAMETER_FPS_RANGE, sizeof(fps_range)},
-         { 166, 1000 }, {999, 1000}
-      };
-      mmal_port_parameter_set(preview_port, &fps_range.hdr);
-   }
-
-   //enable dynamic framerate if necessary
-   if (state->camera_parameters.shutter_speed)
-   {
-      if (state->framerate > 1000000./state->camera_parameters.shutter_speed)
-      {
-         state->framerate=0;
-         if (state->common_settings.verbose)
-            fprintf(stderr, "Enable dynamic frame rate to fulfil shutter speed requirement\n");
-      }
-   }
-
-   format->encoding = MMAL_ENCODING_OPAQUE;
    format->es->video.width = VCOS_ALIGN_UP(state->common_settings.width, 32);
    format->es->video.height = VCOS_ALIGN_UP(state->common_settings.height, 16);
    format->es->video.crop.x = 0;
@@ -170,22 +137,6 @@ MMAL_STATUS_T create_camera_component(RASPIVID_STATE *state)
 
    format = video_port->format;
    format->encoding_variant = MMAL_ENCODING_I420;
-
-   if(state->camera_parameters.shutter_speed > 6000000)
-   {
-      MMAL_PARAMETER_FPS_RANGE_T fps_range = {{MMAL_PARAMETER_FPS_RANGE, sizeof(fps_range)},
-         { 50, 1000 }, {166, 1000}
-      };
-      mmal_port_parameter_set(video_port, &fps_range.hdr);
-   }
-   else if(state->camera_parameters.shutter_speed > 1000000)
-   {
-      MMAL_PARAMETER_FPS_RANGE_T fps_range = {{MMAL_PARAMETER_FPS_RANGE, sizeof(fps_range)},
-         { 167, 1000 }, {999, 1000}
-      };
-      mmal_port_parameter_set(video_port, &fps_range.hdr);
-   }
-
    format->encoding = MMAL_ENCODING_OPAQUE;
    format->es->video.width = VCOS_ALIGN_UP(state->common_settings.width, 32);
    format->es->video.height = VCOS_ALIGN_UP(state->common_settings.height, 16);
@@ -214,7 +165,6 @@ MMAL_STATUS_T create_camera_component(RASPIVID_STATE *state)
 
    format->encoding = MMAL_ENCODING_OPAQUE;
    format->encoding_variant = MMAL_ENCODING_I420;
-
    format->es->video.width = VCOS_ALIGN_UP(state->common_settings.width, 32);
    format->es->video.height = VCOS_ALIGN_UP(state->common_settings.height, 16);
    format->es->video.crop.x = 0;
@@ -256,9 +206,6 @@ MMAL_STATUS_T create_camera_component(RASPIVID_STATE *state)
    {
       state->camera2_component = camera;
    }
-
-   if (state->common_settings.verbose)
-      fprintf(stderr, "Camera component done\n");
 
    return status;
    
@@ -420,9 +367,6 @@ MMAL_STATUS_T create_hvs_component(RASPIVID_STATE *state)
    state->hvs_pool = pool;
    state->hvs_component = hvs;
 
-   if (state->common_settings.verbose)
-      fprintf(stderr, "HVS component done\n");
-
    return status;
 
 error:
@@ -488,177 +432,101 @@ MMAL_STATUS_T create_encoder_component(RASPIVID_STATE *state)
       goto error;
    }
 
-   // Only supporting H264 at the moment  ??
    encoder_output->format->encoding = state->encoding;
-
-   if(state->encoding == MMAL_ENCODING_H264)
-   {
-      if(state->level == MMAL_VIDEO_LEVEL_H264_4)
-      {
-         if(state->bitrate > MAX_BITRATE_LEVEL4)
-         {
-            fprintf(stderr, "Bitrate too high: Reducing to 25MBit/s\n");
-            state->bitrate = MAX_BITRATE_LEVEL4;
-         }
-      }
-      else
-      {
-         if(state->bitrate > MAX_BITRATE_LEVEL42)
-         {
-            fprintf(stderr, "Bitrate too high: Reducing to 62.5MBit/s\n");
-            state->bitrate = MAX_BITRATE_LEVEL42;
-         }
-      }
-   }
-   else if(state->encoding == MMAL_ENCODING_MJPEG)
-   {
-      if(state->bitrate > MAX_BITRATE_MJPEG)
-      {
-         fprintf(stderr, "Bitrate too high: Reducing to 25MBit/s\n");
-         state->bitrate = MAX_BITRATE_MJPEG;
-      }
-   }
-
    encoder_output->format->bitrate = state->bitrate;
-
-   if (state->encoding == MMAL_ENCODING_H264)
-      encoder_output->buffer_size = encoder_output->buffer_size_recommended;
-   else
-      encoder_output->buffer_size = 256<<10;
-
-
+   
+   encoder_output->buffer_size = encoder_output->buffer_size_recommended;
    if (encoder_output->buffer_size < encoder_output->buffer_size_min)
       encoder_output->buffer_size = encoder_output->buffer_size_min;
       
    encoder_output->buffer_num = encoder_output->buffer_num_recommended;
-   
 //   encoder_output->buffer_num = 250;  // if hang not fix on real Pi hardware
-
    if (encoder_output->buffer_num < encoder_output->buffer_num_min)
       encoder_output->buffer_num = encoder_output->buffer_num_min;
      
-   // We need to set the frame rate on output to 0, to ensure it gets
+   // set the frame rate on output to 0, to ensure it gets
    // updated correctly from the input framerate when port connected
    encoder_output->format->es->video.frame_rate.num = 0;
    encoder_output->format->es->video.frame_rate.den = 1;
 
    // Commit the port changes to the output port
    status = mmal_port_format_commit(encoder_output);
-
    if (status != MMAL_SUCCESS)
    {
       vcos_log_error("Unable to set format on video encoder output port");
       goto error;
    }
 
-   // Set the rate control parameter
-   if (0)
+   MMAL_PARAMETER_VIDEO_RATECONTROL_T paramrc = {{ MMAL_PARAMETER_RATECONTROL, sizeof(paramrc)}, MMAL_VIDEO_RATECONTROL_DEFAULT};
+   status = mmal_port_parameter_set(encoder_output, &paramrc.hdr);
+   if (status != MMAL_SUCCESS)
    {
-      MMAL_PARAMETER_VIDEO_RATECONTROL_T param = {{ MMAL_PARAMETER_RATECONTROL, sizeof(param)}, MMAL_VIDEO_RATECONTROL_DEFAULT};
-      status = mmal_port_parameter_set(encoder_output, &param.hdr);
-      if (status != MMAL_SUCCESS)
-      {
-         vcos_log_error("Unable to set ratecontrol");
-         goto error;
-      }
+      vcos_log_error("Unable to set ratecontrol");
+      goto error;
    }
 
-   if (state->encoding == MMAL_ENCODING_H264 &&
-         state->intraperiod != -1)
+   MMAL_PARAMETER_UINT32_T param = {{ MMAL_PARAMETER_INTRAPERIOD, sizeof(param)}, state->intraperiod};
+   status = mmal_port_parameter_set(encoder_output, &param.hdr);
+   if (status != MMAL_SUCCESS)
    {
-      MMAL_PARAMETER_UINT32_T param = {{ MMAL_PARAMETER_INTRAPERIOD, sizeof(param)}, state->intraperiod};
-      status = mmal_port_parameter_set(encoder_output, &param.hdr);
-      if (status != MMAL_SUCCESS)
-      {
-         vcos_log_error("Unable to set intraperiod");
-         goto error;
-      }
+      vcos_log_error("Unable to set intraperiod");
+      goto error;
    }
 
-   if (state->encoding == MMAL_ENCODING_H264 &&
-       state->quantisationParameter)
+   MMAL_PARAMETER_UINT32_T param1 = {{ MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT, sizeof(param1)}, state->quantisationParameter};
+   status = mmal_port_parameter_set(encoder_output, &param1.hdr);
+   if (status != MMAL_SUCCESS)
    {
-      MMAL_PARAMETER_UINT32_T param = {{ MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT, sizeof(param)}, state->quantisationParameter};
-      status = mmal_port_parameter_set(encoder_output, &param.hdr);
-      if (status != MMAL_SUCCESS)
-      {
-         vcos_log_error("Unable to set initial QP");
-         goto error;
-      }
-
-      MMAL_PARAMETER_UINT32_T param2 = {{ MMAL_PARAMETER_VIDEO_ENCODE_MIN_QUANT, sizeof(param)}, state->quantisationMin};
-      status = mmal_port_parameter_set(encoder_output, &param2.hdr);
-      if (status != MMAL_SUCCESS)
-      {
-         vcos_log_error("Unable to set min QP");
-         goto error;
-      }
-
-      MMAL_PARAMETER_UINT32_T param3 = {{ MMAL_PARAMETER_VIDEO_ENCODE_MAX_QUANT, sizeof(param)}, state->quantisationMax};
-      status = mmal_port_parameter_set(encoder_output, &param3.hdr);
-      if (status != MMAL_SUCCESS)
-      {
-         vcos_log_error("Unable to set max QP");
-         goto error;
-      }
+      vcos_log_error("Unable to set initial QP");
+      goto error;
    }
 
-   if (state->encoding == MMAL_ENCODING_H264)
+   MMAL_PARAMETER_UINT32_T param2 = {{ MMAL_PARAMETER_VIDEO_ENCODE_MIN_QUANT, sizeof(param2)}, state->quantisationMin};
+   status = mmal_port_parameter_set(encoder_output, &param2.hdr);
+   if (status != MMAL_SUCCESS)
    {
-      MMAL_PARAMETER_VIDEO_PROFILE_T  param;
-      param.hdr.id = MMAL_PARAMETER_PROFILE;
-      param.hdr.size = sizeof(param);
+      vcos_log_error("Unable to set min QP");
+      goto error;
+   }
 
-      param.profile[0].profile = state->profile;
+   MMAL_PARAMETER_UINT32_T param3 = {{ MMAL_PARAMETER_VIDEO_ENCODE_MAX_QUANT, sizeof(param3)}, state->quantisationMax};
+   status = mmal_port_parameter_set(encoder_output, &param3.hdr);
+   if (status != MMAL_SUCCESS)
+   {
+      vcos_log_error("Unable to set max QP");
+      goto error;
+   }
 
-      if((VCOS_ALIGN_UP(state->common_settings.width,16) >> 4) * (VCOS_ALIGN_UP(state->common_settings.height,16) >> 4) * state->framerate > 245760)
-      {
-         if((VCOS_ALIGN_UP(state->common_settings.width,16) >> 4) * (VCOS_ALIGN_UP(state->common_settings.height,16) >> 4) * state->framerate <= 522240)
-         {
-            fprintf(stderr, "Too many macroblocks/s: Increasing H264 Level to 4.2\n");
-            state->level=MMAL_VIDEO_LEVEL_H264_42;
-         }
-         else
-         {
-            vcos_log_error("Too many macroblocks/s requested");
-            status = MMAL_EINVAL;
-            goto error;
-         }
-      }
-
-      param.profile[0].level = state->level;
-
-      status = mmal_port_parameter_set(encoder_output, &param.hdr);
-      if (status != MMAL_SUCCESS)
-      {
-         vcos_log_error("Unable to set H264 profile");
-         goto error;
-      }
+   MMAL_PARAMETER_VIDEO_PROFILE_T  paramvp;
+   paramvp.hdr.id = MMAL_PARAMETER_PROFILE;
+   paramvp.hdr.size = sizeof(paramvp);
+   paramvp.profile[0].profile = state->profile;
+   paramvp.profile[0].level = state->level;
+   status = mmal_port_parameter_set(encoder_output, &paramvp.hdr);
+   if (status != MMAL_SUCCESS)
+   {
+      vcos_log_error("Unable to set H264 profile");
+      goto error;
    }
 
    if (mmal_port_parameter_set_boolean(encoder_input, MMAL_PARAMETER_VIDEO_IMMUTABLE_INPUT, state->immutableInput) != MMAL_SUCCESS)
    {
       vcos_log_error("Unable to set immutable input flag");
-      // Continue rather than abort..
    }
 
-   if (state->encoding == MMAL_ENCODING_H264)
+
+   //set INLINE HEADER flag to generate SPS and PPS for every IDR if requested
+   if (mmal_port_parameter_set_boolean(encoder_output, MMAL_PARAMETER_VIDEO_ENCODE_INLINE_HEADER, state->bInlineHeaders) != MMAL_SUCCESS)
    {
-      //set INLINE HEADER flag to generate SPS and PPS for every IDR if requested
-      if (mmal_port_parameter_set_boolean(encoder_output, MMAL_PARAMETER_VIDEO_ENCODE_INLINE_HEADER, state->bInlineHeaders) != MMAL_SUCCESS)
-      {
-         vcos_log_error("failed to set INLINE HEADER FLAG parameters");
-         // Continue rather than abort..
-      }
+      vcos_log_error("failed to set INLINE HEADER FLAG parameters");
+   }
 
       //set flag for add SPS TIMING
-      if (mmal_port_parameter_set_boolean(encoder_output, MMAL_PARAMETER_VIDEO_ENCODE_SPS_TIMING, state->addSPSTiming) != MMAL_SUCCESS)
-      {
-         vcos_log_error("failed to set SPS TIMINGS FLAG parameters");
-         // Continue rather than abort..
-      }
+   if (mmal_port_parameter_set_boolean(encoder_output, MMAL_PARAMETER_VIDEO_ENCODE_SPS_TIMING, state->addSPSTiming) != MMAL_SUCCESS)
+   {
+      vcos_log_error("failed to set SPS TIMINGS FLAG parameters");
    }
-   
+ 
    //  Enable component
    status = mmal_component_enable(encoder);
 
@@ -678,9 +546,6 @@ MMAL_STATUS_T create_encoder_component(RASPIVID_STATE *state)
 
    state->encoder_pool = pool;
    state->encoder_component = encoder;
-
-   if (state->common_settings.verbose)
-      fprintf(stderr, "Encoder component done\n");
       
    return status;
 
@@ -801,7 +666,7 @@ void default_status(RASPIVID_STATE *state)
    // We dont set width and height since these will be specific to the app being built.
 
    state->common_settings.filename = NULL;
-   state->common_settings.verbose = 0;
+   state->common_settings.verbose = 0;  //remove
    state->common_settings.cameraNum = 1;
    state->common_settings.sensor_mode = 5;
 
@@ -819,10 +684,10 @@ void default_status(RASPIVID_STATE *state)
    state->immutableInput = 1;
    state->profile = MMAL_VIDEO_PROFILE_H264_HIGH;
    state->level = MMAL_VIDEO_LEVEL_H264_41;
-   state->waitMethod = 0;
-   state->bCapturing = 0;
+   state->waitMethod = 0;     //remove
+   state->bCapturing = 0;     //remove
    state->bInlineHeaders = 0;
-   state->frame = 0;
+   state->frame = 0;             //remove??
    state->addSPSTiming = MMAL_FALSE;
    state->slices = 1;
 

@@ -103,6 +103,7 @@ static int write_audio_msg = 0;
 static int fps = 25;
 static int stop_flag=0;
 static int check_switch=0;
+static int gpio_init=0;
 
 static int64_t start, atime, vtime, wstart, start_time, write_target_time, write_variance = 0, pbrec_count = LLONG_MAX;
 
@@ -426,14 +427,13 @@ int close_avapi(void)
 		
 	if (flv_frmtctx)
 		{
-		if (io_ctx->seekable == 1)
+		if (io_ctx && io_ctx->seekable == 1)
 			{
 			status = av_write_trailer(flv_frmtctx);  
 			if (status < 0) {fprintf(stderr, "Write ouput trailer failed! STATUS %d\n", status);}
 			}  
 		avformat_free_context(flv_frmtctx);
 		}
-	
 	if (io_ctx)
 		{	
 		status = avio_close(io_ctx);	
@@ -1010,14 +1010,16 @@ MMAL_STATUS_T setup_components(RASPIVID_STATE *state)
 void close_components(RASPIVID_STATE *state)
 {
     // Disable all our ports that are not handled by connections
+    if (state->encoder_component)
+		check_disable_port(state->encoder_component->output[0]);
     
-	check_disable_port(state->encoder_component->output[0]);
-    
-    check_disable_port(state->camera_component->output[MMAL_CAMERA_PREVIEW_PORT]);  
-    check_disable_port(state->camera_component->output[MMAL_CAMERA_CAPTURE_PORT]);
-    check_disable_port(state->camera2_component->output[MMAL_CAMERA_PREVIEW_PORT]); 
-    check_disable_port(state->camera2_component->output[MMAL_CAMERA_CAPTURE_PORT]);  
-          
+    if (state->camera_component) {
+		check_disable_port(state->camera_component->output[MMAL_CAMERA_PREVIEW_PORT]);  
+		check_disable_port(state->camera_component->output[MMAL_CAMERA_CAPTURE_PORT]);}
+	if (state->camera2_component) {
+		check_disable_port(state->camera2_component->output[MMAL_CAMERA_PREVIEW_PORT]); 
+		check_disable_port(state->camera2_component->output[MMAL_CAMERA_CAPTURE_PORT]);}  
+   
 	if (state->encoder_connection)
 		mmal_connection_destroy(state->encoder_connection);
 	if (state->hvs_main_connection)
@@ -1052,10 +1054,12 @@ static void close_it(void)
 	close_components(pstate);
 	close_avapi();
 	sem_destroy(psem);
+	if (gpio_init) {
 	bcm2835_gpio_write(GPIO_LED, LOW);
-	bcm2835_close();
-	snd_pcm_close(handle);
-	handle = NULL;
+	bcm2835_close();}
+	if (handle) {
+		snd_pcm_close(handle);
+		handle = NULL;}
 	free(audiobuf);
 	free(rlbufs);
 	snd_config_update_free_global();
@@ -1109,10 +1113,11 @@ static void capture(char *orig_name)
 	
 	// init ffmpeg  
 	status=init_avapi(name);
+	if (status) {prg_exit(EXIT_FAILURE);}
 	
 	// init GPIO library bcm2835
-	if (!bcm2835_init())
-        fprintf (stderr, "bcm2835 init failed\n");
+	if (bcm2835_init()) {gpio_init = 1;}
+	else {fprintf (stderr, "bcm2835 init failed\n");}
     bcm2835_gpio_fsel(GPIO_SWT, BCM2835_GPIO_FSEL_INPT);
     bcm2835_gpio_fsel(GPIO_LED, BCM2835_GPIO_FSEL_OUTP);
 
@@ -1473,8 +1478,7 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "overlay window must be smaller than main window\n");
 		return 1;}
 	if (loc_x >= (width-ovl_width) || loc_y >= height-ovl_height) {
-		fprintf(stderr, "overlay window must be fall withing the main window\n");
-		return 1;}
+		fprintf(stderr, "Warning: The overlay window falls partly outside the main window and will not be visible\n");}
 	if (minQ > initQ || minQ > maxQ || maxQ < initQ || maxQ < minQ) {
 		fprintf(stderr, "quantalizer values not logical\n");
 		return 1;}
