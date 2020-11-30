@@ -13,13 +13,11 @@ and both streams are added to flash video container by FFMPEG api.
 Install: cmake . 
 
 Software required:
-FFMPEG library sudo apt-get install ffmpeg
-bcm2835 library http://www.airspayce.com/mikem/bcm2835/index.html
+* FFMPEG library sudo apt-get install ffmpeg
+* bcm2835 library http://www.airspayce.com/mikem/bcm2835/index.html
 
 Hardware required:
-
-2 Camera Raspberry Pi Compute Module 
+* 2 Camera Raspberry Pi Compute Module 
 	(with carrier board - Raspberry CM3 for CM4 I/O board, StereoPi or WaveShare POE board)
-
-Adafruit I2S MEMS Microphone (SPH0645LM4H)
+* Adafruit I2S MEMS Microphone (SPH0645LM4H)
 
