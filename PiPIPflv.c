@@ -52,11 +52,10 @@
 #include "interface/mmal/util/mmal_connection.h"
 #include "interface/mmal/mmal_parameters_camera.h"
 
+#include <bcm2835.h>
 
 #include "raspiCamUtilities.h"
 #include "mmalcomponent.h"
-
-
 
 #ifndef LLONG_MAX
 #define LLONG_MAX    9223372036854775807LL
@@ -66,6 +65,8 @@
 #define DEFAULT_SPEED 		44100
 #define BUFFER_SIZE			262144
 #define DEFAULT_CHANNELS_IN	2
+#define GPIO_LED			RPI_BPLUS_GPIO_J8_13 
+#define GPIO_SWT			RPI_BPLUS_GPIO_J8_15
 
 static char *command;
 static snd_pcm_t *handle;
@@ -100,6 +101,8 @@ static int channel_num = 1;
 static int write_video_msg = 0;
 static int write_audio_msg = 0;
 static int fps = 25;
+static int stop_flag=0;
+static int check_switch=0;
 
 static int64_t start, atime, vtime, wstart, start_time, write_target_time, write_variance = 0, pbrec_count = LLONG_MAX;
 
@@ -156,7 +159,7 @@ static void usage(char *command)
 "\n"
 "Program paramaters:\n"
 "-?, --help              	help\n"
-"-d, --duration=#        	interrupt after # seconds - defaults to forever\n"
+"-d, --duration=#        	interrupt after # seconds - defaults to forever (0) -1 is use GPIO switch\n"
 "-v, --verbose=#         	write info messages to STDERR 1=video, 2=audio or 3=both\n"
 "Audio paramaters:\n"
 "-D, --device=NAME       	select PCM by name\n"  
@@ -387,7 +390,8 @@ int init_avapi(char *filename)
 
 	return 0; 
 }
-int close_avapi(char *filename)
+//int close_avapi(char *filename)
+int close_avapi(void)
 {
 	int status;
 
@@ -426,19 +430,19 @@ int close_avapi(char *filename)
 			{
 			status = av_write_trailer(flv_frmtctx);  
 			if (status < 0) {fprintf(stderr, "Write ouput trailer failed! STATUS %d\n", status);}
-			}   
+			}  
 		avformat_free_context(flv_frmtctx);
 		}
 	
 	if (io_ctx)
-		{
-		status = avio_close(io_ctx);
+		{	
+		status = avio_close(io_ctx);	
 		if (status < 0)
 			{
 			fprintf(stderr, "Could not close output file (error '%s')\n", av_err2str(status));
 			return -1; 
 			}
-		}
+		} 
 	return 0;
 }
 static void encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
@@ -797,11 +801,9 @@ static void xrun(void)
 				return;
 				}
 			}
-
 		fprintf(stderr, "read/write error, state = %s\n", snd_pcm_state_name(snd_pcm_status_get_state(status)));
 		prg_exit(EXIT_FAILURE);
 }
-
 /* I/O suspend handler */
 static void suspend(void)
 {
@@ -815,11 +817,9 @@ static void suspend(void)
 		}
 	}
 }
-
 /*
  *  read function
  */
-
 static ssize_t pcm_read(u_char *data, u_char **data_out,size_t rcount)
 {
 	ssize_t r, size;
@@ -1046,12 +1046,23 @@ void close_components(RASPIVID_STATE *state)
 /*
  *	Subroutine to clean up before exit.
  */
+static void close_it(void)  
+{
+	sem_t *psem=pstate->callback_data.mutex;
+	close_components(pstate);
+	close_avapi();
+	sem_destroy(psem);
+	bcm2835_gpio_write(GPIO_LED, LOW);
+	bcm2835_close();
+	snd_pcm_close(handle);
+	handle = NULL;
+	free(audiobuf);
+	free(rlbufs);
+	snd_config_update_free_global();
+}
 static void prg_exit(int code)  
 {
-	if (handle)
-		snd_pcm_close(handle);
-	if (pstate)
-		close_components(pstate);
+	close_it();
 	exit(code);
 }
 static void signal_handler(int sig)
@@ -1098,8 +1109,13 @@ static void capture(char *orig_name)
 	
 	// init ffmpeg  
 	status=init_avapi(name);
+	
+	// init GPIO library bcm2835
+	if (!bcm2835_init())
+        fprintf (stderr, "bcm2835 init failed\n");
+    bcm2835_gpio_fsel(GPIO_SWT, BCM2835_GPIO_FSEL_INPT);
+    bcm2835_gpio_fsel(GPIO_LED, BCM2835_GPIO_FSEL_OUTP);
 
-	bcm_host_init(); 
 	vcos_log_register("PiPIPflv", VCOS_LOG_CATEGORY);
 	
     start_time = get_microseconds64()/1000; 
@@ -1120,8 +1136,6 @@ static void capture(char *orig_name)
 	state.quantisationParameter = initQ;
 	state.quantisationMin = minQ;
 	state.quantisationMax = maxQ;
-
-	// param parsing was here in raspivid but done before state is allocated so needs to hold in temp vars then move to state here
 	
 	// init components 
 	status = setup_components(&state);
@@ -1176,98 +1190,93 @@ static void capture(char *orig_name)
 
 	if (count > 2147483648LL)
 		count = 2147483648LL;
-		
-	do 
-		{
 
-        start = atime = vtime = get_microseconds64();
+    start = atime = vtime = get_microseconds64();
                 
-		if (write_audio_msg || write_video_msg)
-			{
-			fprintf(stderr, "      Stream time   Time/Write      Size Bytes/μs Time/Frame  Type  Samples\n");
-			}
+	if (write_audio_msg || write_video_msg)
+		{
+		fprintf(stderr, "      Stream time   Time/Write      Size Bytes/μs Time/Frame  Type  Samples\n");
+		}
 
-		// capture 
-		snd_pcm_drop(handle);
-		snd_pcm_prepare(handle);
+	// capture 
+	snd_pcm_drop(handle);
+	snd_pcm_prepare(handle);
 
-		mmal_port_parameter_set_boolean(state.camera_component->output[MMAL_CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 1);
-		mmal_port_parameter_set_boolean(state.camera2_component->output[MMAL_CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 1);
-
-		int64_t stop_time;
-
-		if (timelimit)
-			{
-			stop_time = get_microseconds64()+(timelimit*1000000);
-			}
-		else
-			{
-			stop_time = 9223372036854775807LL;
-			}
+	mmal_port_parameter_set_boolean(state.camera_component->output[MMAL_CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 1);
+	mmal_port_parameter_set_boolean(state.camera2_component->output[MMAL_CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 1);
 		
-		int once = 1;	
-		
-		while (stop_time > get_microseconds64())
-			{
-			size_t c = (count <= (int64_t)chunk_bytes) ? (size_t)count : chunk_bytes;
-			size_t f = c * 8 / bits_per_frame;
+	bcm2835_gpio_write(GPIO_LED, HIGH);
 
-			if (pcm_read(audiobuf, bufs, f) != f)
-				break;
-			if (encode_and_write(bufs, 0, &def_mutex) < 0) 
+	int64_t stop_time;
+
+	if (timelimit)
+		{
+		stop_time = get_microseconds64()+(timelimit*1000000);
+		}
+	else
+		{
+		stop_time = 9223372036854775807LL;
+		}
+		
+	while (stop_time > get_microseconds64() && !(stop_flag))
+		{
+		size_t c = (count <= (int64_t)chunk_bytes) ? (size_t)count : chunk_bytes;
+		size_t f = c * 8 / bits_per_frame;
+
+		if (pcm_read(audiobuf, bufs, f) != f)   //? if
+			break;
+		if (encode_and_write(bufs, 0, &def_mutex) < 0) 
+			{
+			fprintf(stderr, "encode/write failed!\n");
+			prg_exit(EXIT_FAILURE);
+			}
+		if (write_variance > (write_target_time*fps*4) || write_variance < (write_target_time*fps*-4))
+			{
+			MMAL_PARAMETER_UINT32_T param = {{ MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT, sizeof(param)}, 0};
+			status = mmal_port_parameter_get(state.encoder_component->output[0], &param.hdr);
+			if (status != MMAL_SUCCESS) {vcos_log_error("Unable to get current QP");}
+			if (write_variance < 0 && param.value > state.quantisationMin)
 				{
-				fprintf(stderr, "encode/write failed!\n");
-				close_avapi(name);
-				prg_exit(EXIT_FAILURE);
+				param.value--;
+				fprintf(stderr, "Quantization now %d\n", param.value);
+				status = mmal_port_parameter_set(state.encoder_component->output[0], &param.hdr);
+				if (status != MMAL_SUCCESS) {vcos_log_error("Unable to reset QP");}
+				write_variance = 0;
 				}
-			if (write_variance > (write_target_time*fps*4) || write_variance < (write_target_time*fps*-4))
+			else 
 				{
-				MMAL_PARAMETER_UINT32_T param = {{ MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT, sizeof(param)}, 0};
-				status = mmal_port_parameter_get(state.encoder_component->output[0], &param.hdr);
-				if (status != MMAL_SUCCESS) {vcos_log_error("Unable to get current QP");}
-				if (write_variance < 0 && param.value > state.quantisationMin)
+				if (write_variance > 0 && param.value < state.quantisationMax)
 					{
-					param.value--;
-					fprintf(stderr, "new q value %d\n", param.value);
+					param.value++;
+					fprintf(stderr, "Quantization now %d\n", param.value);
 					status = mmal_port_parameter_set(state.encoder_component->output[0], &param.hdr);
 					if (status != MMAL_SUCCESS) {vcos_log_error("Unable to reset QP");}
 					write_variance = 0;
 					}
-				else 
+				else
 					{
-					if (write_variance > 0 && param.value < state.quantisationMax)
-						{
-						param.value++;
-						fprintf(stderr, "New q value %d\n", param.value);
-						status = mmal_port_parameter_set(state.encoder_component->output[0], &param.hdr);
-						if (status != MMAL_SUCCESS) {vcos_log_error("Unable to reset QP");}
-						write_variance = 0;
-						}
-					else
-						{
-						write_variance = 0;
-						}
+					write_variance = 0;
 					}
 				}
-			count -= c;
-			if (abort_flg) {count = 0; fprintf(stderr, "abort\n");}
 			}
-		count = 0;
+		count -= c;
+		if (abort_flg) {count = 0; fprintf(stderr, "abort\n");}
+		if (check_switch) {
+			stop_flag = bcm2835_gpio_lev(GPIO_SWT);
+			if (stop_flag) {count =0;}
+			}				
+		}
+	bcm2835_gpio_write(GPIO_LED, LOW);
 		
-		mmal_port_parameter_set_boolean(state.camera_component->output[MMAL_CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
-		mmal_port_parameter_set_boolean(state.camera2_component->output[MMAL_CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
+	mmal_port_parameter_set_boolean(state.camera_component->output[MMAL_CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
+	mmal_port_parameter_set_boolean(state.camera2_component->output[MMAL_CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
 	
-		if (encode_and_write(bufs, 1, &def_mutex) < 0) 
-			{
-			fprintf(stderr, "encode/write last failed!\n");
-			close_components(&state);
-			close_avapi(name);
-			prg_exit(EXIT_FAILURE);
-			}
-		close_components(&state);
-		close_avapi(name);
-		sem_destroy(&def_mutex);
-		} while (count > 0);
+	if (encode_and_write(bufs, 1, &def_mutex) < 0) 
+		{
+		fprintf(stderr, "encode/write last failed!\n");
+		prg_exit(EXIT_FAILURE);
+		}
+	close_it();
 }
 
 int main(int argc, char *argv[])
@@ -1453,6 +1462,10 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	if (timelimit == -1) {
+		check_switch = 1;
+		timelimit = 0;}
+
 	if (badparm == 1) {
 		return 1;}
 		
@@ -1494,12 +1507,6 @@ int main(int argc, char *argv[])
 		capture(argv[optind++]);
 		}
 	
-	snd_pcm_close(handle);
-	handle = NULL;
-	free(audiobuf);
-	free(rlbufs);
-	
-	snd_config_update_free_global();
 	return EXIT_SUCCESS;
 }
 
