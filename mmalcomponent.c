@@ -186,6 +186,7 @@ MMAL_STATUS_T create_camera_component(RASPIVID_STATE *state)
    if (still_port->buffer_num < VIDEO_OUTPUT_BUFFERS_NUM)
       still_port->buffer_num = VIDEO_OUTPUT_BUFFERS_NUM;
 
+
    // Enable component 
    status = mmal_component_enable(camera);
 
@@ -440,7 +441,8 @@ MMAL_STATUS_T create_encoder_component(RASPIVID_STATE *state)
       encoder_output->buffer_size = encoder_output->buffer_size_min;
       
    encoder_output->buffer_num = encoder_output->buffer_num_recommended;
-//   encoder_output->buffer_num = 250;  // if hang not fix on real Pi hardware
+// remove when hang is resolved
+   encoder_output->buffer_num = 100;  // if hang not fix on real Pi hardware
    if (encoder_output->buffer_num < encoder_output->buffer_num_min)
       encoder_output->buffer_num = encoder_output->buffer_num_min;
      

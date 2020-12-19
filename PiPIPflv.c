@@ -68,44 +68,43 @@
 #define GPIO_LED			RPI_BPLUS_GPIO_J8_13 
 #define GPIO_SWT			RPI_BPLUS_GPIO_J8_15
 
-static char *command;
-static snd_pcm_t *handle;
-static struct {
+char *command;
+snd_pcm_t *handle;
+struct {
 	snd_pcm_format_t format;
 	unsigned int channels;
 	unsigned int rate;
 } hwparams, rhwparams;
-static int timelimit = 0;
-static snd_pcm_stream_t stream = SND_PCM_STREAM_PLAYBACK;
-static u_char *audiobuf = NULL, *rlbufs = NULL;
-static snd_pcm_uframes_t chunk_size = 0;
-static snd_pcm_uframes_t buffer_frames = 0;
-static size_t bits_per_sample, bits_per_frame;
-static size_t chunk_bytes;
-static int badparm=0;
-static int height = 1080;
-static int width = 1920;
-static int ovl_height = 540;
-static int ovl_width = 960;
-static int loc_x = -1;
-static int loc_y = -1;
-static int m_flip_h = MMAL_TRUE;
-static int m_flip_v = MMAL_TRUE;
-static int o_flip_h = MMAL_FALSE;
-static int o_flip_v = MMAL_TRUE;
-static int camera = 1;
-static int intraframe = 30;
-static int initQ = 0, minQ = 20, maxQ = 40;
-static int abort_flg = 0;
-static int channel_num = 1;
-static int write_video_msg = 0;
-static int write_audio_msg = 0;
-static int fps = 25;
-static int stop_flag=0;
-static int check_switch=0;
-static int gpio_init=0;
+int timelimit = 0;
+snd_pcm_stream_t stream = SND_PCM_STREAM_PLAYBACK;
+u_char *audiobuf = NULL, *rlbufs = NULL;
+snd_pcm_uframes_t chunk_size = 0;
+snd_pcm_uframes_t buffer_frames = 0;
+size_t bits_per_sample, bits_per_frame;
+size_t chunk_bytes;
+int badparm=0;
+int height = 1080;
+int width = 1920;
+int ovl_height = 540;
+int ovl_width = 960;
+int loc_x = -1;
+int loc_y = -1;
+int m_flip_h = MMAL_FALSE;
+int m_flip_v = MMAL_FALSE;
+int o_flip_h = MMAL_TRUE;
+int o_flip_v = MMAL_FALSE;
+int camera = 1;
+int intraframe = 30;
+int initQ = 25, minQ = 20, maxQ = 40;
+int abort_flg = 0;
+int channel_num = 1;
+int fps = 25;
+int stop_flag=0;
+int check_switch=0;
+int gpio_init=0;
+int atmaxQ=0;
 
-static int64_t start, atime, vtime, wstart, start_time, write_target_time, write_variance = 0, pbrec_count = LLONG_MAX;
+int64_t start_time, write_target_time, write_variance = 0, pbrec_count = LLONG_MAX;
 
 char file_name[128];
 char pcm_name[17];
@@ -119,49 +118,33 @@ AVStream *aac_audio_strm = NULL, *h264_video_strm = NULL;
 SwrContext *resample_ctx = NULL;
 AVAudioFifo *fifo = NULL;
 AVFrame *infrm, *outfrm;
+int64_t audio_samples=0; 
+char datestr[32];
 
 static void prg_exit(int code);
 
-int64_t audio_samples=0; 
-
-static void prt_hours(int64_t ticks)
+static char* get_time_str(char* time_str)
 {
-	int64_t msec, sec, min, hr;
-	msec = ticks%1000000ULL;
-	ticks -= msec;
-	ticks = ticks/1000000ULL;
-	sec = ticks%60;
-	ticks -=sec;
-	ticks = ticks/60;
-	min = ticks%60;
-	ticks -=min;
-	hr = ticks/60;
-	fprintf(stderr, "%4llu:%02llu:%02llu.%06llu", hr, min, sec, msec);
-}
-
-static void prt_secs(int64_t ticks)
-{
-	int64_t msec, sec;
-	msec = ticks%1000000ULL;
-	ticks -= msec;
-	sec = ticks%60;
-	fprintf(stderr, "%2llu.%06llu", sec, msec);
-}
+	time_t time_uf;
+	struct tm *time_fmt;
+	time(&time_uf);
+	time_fmt = localtime(&time_uf);
+    strftime(time_str, 32,"%a %d %b %Y %I:%M:%S %p %Z", time_fmt);
+	return time_str;
+} 
 
 static void usage(char *command)
 {
 	printf(
 ("Usage: %s [OPTION]... URL"
 "\n"
-"  URL in the form Protocol:loc (valid protocols are RTMP, FILE and PIPE)\n"
+"  URL in the form Protocol:loc (valid protocols are RTMP and FILE)\n"
 "    for RTMP loc is URL string\n"
 "    for FILE loc is path and filename string\n"
-"    for PIPE loc is 1 for STDOUT\n"
 "\n"
 "Program paramaters:\n"
 "-?, --help              	help\n"
 "-d, --duration=#        	interrupt after # seconds - defaults to forever (0) -1 is use GPIO switch\n"
-"-v, --verbose=#         	write info messages to STDERR 1=video, 2=audio or 3=both\n"
 "Audio paramaters:\n"
 "-D, --device=NAME       	select PCM by name\n"  
 "-n, --number=#          	number of audio channels\n"
@@ -170,7 +153,7 @@ static void usage(char *command)
 "-h, --height=#          	height #:# pixels - defaults to max 1080 if 2nd number is omitted 2nd camera is 1/2 height\n"
 "-w, --width=#        	 	width #:# pixels - defaults to max 1920 if 2nd number is omitted 2nd camera is 1/2 height\n"
 "-l, --location=#:#      	2nd camera PIP location h:v pixel camera # - defaults to lower left\n"
-"-f, --flip=h.v:h.v      	flip image of camera - example 1.1:0.1 flips the main camera vertically & horizontally\n"
+"-f, --flip=h.v:h.v      	flip image of camera - example 0.0:1.0 flips the main camera vertically & horizontally\n"
 "                        	and 2nd camera vertically\n"
 "-F, --fps=#				frames per second #\n"
 "Encoder paramaters:\n"
@@ -303,7 +286,7 @@ int init_avapi(char *filename)
 		return -1;
 		}
 
-//  	av_dump_format(flv_frmtctx, 0, "stderr", 1);
+//  	av_dump_format(flv_frmtctx, 0, "stdout", 1);
 
 //  setup RAW codec and context
 	raw_codec = avcodec_find_encoder(AV_CODEC_ID_PCM_S32LE_PLANAR);
@@ -396,7 +379,7 @@ int close_avapi(void)
 {
 	int status;
 
-	if (write_audio_msg || write_video_msg) {fprintf(stderr, "\n");}
+//	if (write_audio_msg || write_video_msg) {fprintf(stderr, "\n");}
 
 	if (outfrm) {av_frame_free(&outfrm);}
 	if (infrm) {av_frame_free(&infrm);}
@@ -522,24 +505,11 @@ static void encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buf
 							}
 						memcpy(side_data, buffer->data+buffer->offset, buffer->length);
 						}
-					wstart = get_microseconds64();
+					int64_t wstart = get_microseconds64();
 					sem_wait(pData->mutex);
 					status=av_write_frame(flv_frmtctx, packet);
 					sem_post(pData->mutex);
-					int64_t etime = get_microseconds64();
-					if (write_video_msg) 
-						{
-						prt_hours(etime  - start);
-						fprintf(stderr, "    ");
-						prt_secs(etime - wstart);
-						fprintf(stderr, "    %6d  %4lld/μs  ", packet->size, packet->size/(etime - wstart));
-						prt_secs(etime - vtime);
-						fprintf(stderr, " Video %8lld \r", framecnt);
-						}
-					vtime = etime;
-					*pData->wvariance = *pData->wvariance + (etime - wstart)-*pData->wtargettime;
-//					fprintf(stderr, "%lld %lld\n", *pData->wvariance, *pData->wtargettime);
-//					fprintf(stderr, "%lld %lld\n", (etime - wstart), ((etime - wstart)-20000));
+					*pData->wvariance = *pData->wvariance + (get_microseconds64() - wstart)-*pData->wtargettime;
 					if (status)
 						{
 						fprintf(stderr, "frame write error or flush %d\n", status);
@@ -663,21 +633,9 @@ int encode_and_write(u_char **data_in, int flush, sem_t *mutex)
 				packet.pos=-1;
 				packet.dts=packet.pts=save_pts-250;
 				packet.stream_index = 1;
-				wstart = get_microseconds64();
 				sem_wait(mutex);
 				status = av_write_frame(flv_frmtctx, &packet);
 				sem_post(mutex); 
-				int64_t etime = get_microseconds64();
-				if (write_audio_msg)
-					{
-					prt_hours(etime  - start);
-					fprintf(stderr, "    ");
-					prt_secs(etime - wstart);
-					fprintf(stderr, "    %6d  %4lld/μs  ", packet.size, packet.size/(etime - wstart));
-					prt_secs(etime - atime);
-					fprintf(stderr, " Audio %8lld\r", save_pts);
-					}
-				atime = etime;
 				if (status < 0) 
 					{
 					fprintf(stderr, "Could not write frame (error '%s')\n", av_err2str(status));
@@ -928,7 +886,7 @@ MMAL_STATUS_T setup_components(RASPIVID_STATE *state)
                        &max_width, &max_height);
                        
     if (width > max_width || ovl_width > max_width || height > max_height || ovl_height > max_height) {
-		fprintf(stderr, "Resolution larger than sensor %dX%d\n", max_width, max_height);
+		fprintf(stdout, "Resolution larger than sensor %dX%d\n", max_width, max_height);
 		return -128;}
 		
     state->camera_parameters.stereo_mode.mode = MMAL_STEREOSCOPIC_MODE_NONE;
@@ -940,20 +898,19 @@ MMAL_STATUS_T setup_components(RASPIVID_STATE *state)
 		vcos_log_error("%s: Failed to create camera component", __func__);
 		return -128;
 		}
-   
+		
 	state->common_settings.width = ovl_width;
 	state->common_settings.height = ovl_height;
 	state->common_settings.cameraNum = cam2;
 	state->camera_parameters.vflip = o_flip_v;
 	state->camera_parameters.hflip = o_flip_h;
-
    
 	if ((status = create_camera_component(state)) != MMAL_SUCCESS)
 		{
 		vcos_log_error("%s: Failed to create camera component", __func__);
 		return -128;
 		}
-   
+
 	state->common_settings.width = width;
 	state->common_settings.height = height;
 	state->common_settings.cameraNum = cam;
@@ -1050,6 +1007,8 @@ void close_components(RASPIVID_STATE *state)
  */
 static void close_it(void)  
 {
+	fprintf(stdout, "\n");
+	fprintf(stdout, "%s PiPIPflv ending\n", get_time_str(datestr));
 	sem_t *psem=pstate->callback_data.mutex;
 	close_components(pstate);
 	close_avapi();
@@ -1196,13 +1155,6 @@ static void capture(char *orig_name)
 	if (count > 2147483648LL)
 		count = 2147483648LL;
 
-    start = atime = vtime = get_microseconds64();
-                
-	if (write_audio_msg || write_video_msg)
-		{
-		fprintf(stderr, "      Stream time   Time/Write      Size Bytes/μs Time/Frame  Type  Samples\n");
-		}
-
 	// capture 
 	snd_pcm_drop(handle);
 	snd_pcm_prepare(handle);
@@ -1243,7 +1195,8 @@ static void capture(char *orig_name)
 			if (write_variance < 0 && param.value > state.quantisationMin)
 				{
 				param.value--;
-				fprintf(stderr, "Quantization now %d\n", param.value);
+				atmaxQ = MMAL_FALSE;
+				fprintf(stdout, "%s Quantization %d\r", get_time_str(datestr), param.value);
 				status = mmal_port_parameter_set(state.encoder_component->output[0], &param.hdr);
 				if (status != MMAL_SUCCESS) {vcos_log_error("Unable to reset QP");}
 				write_variance = 0;
@@ -1253,13 +1206,18 @@ static void capture(char *orig_name)
 				if (write_variance > 0 && param.value < state.quantisationMax)
 					{
 					param.value++;
-					fprintf(stderr, "Quantization now %d\n", param.value);
+					fprintf(stdout, "%s Quantization %d\r", get_time_str(datestr), param.value);
 					status = mmal_port_parameter_set(state.encoder_component->output[0], &param.hdr);
 					if (status != MMAL_SUCCESS) {vcos_log_error("Unable to reset QP");}
 					write_variance = 0;
 					}
 				else
 					{
+					if (param.value == state.quantisationMax && !(atmaxQ))
+						{
+						fprintf(stdout, "%s At max Quantization %d\r", get_time_str(datestr), param.value);	
+						atmaxQ = MMAL_TRUE;
+						}
 					write_variance = 0;
 					}
 				}
@@ -1288,7 +1246,7 @@ int main(int argc, char *argv[])
 {
 
 	int option_index;
-	static const char short_options[] = "?D:d:h:w:c:q:i:n:v:l:f:F:";
+	static const char short_options[] = "?D:d:h:w:c:q:i:n:l:f:F:";
 	static const struct option long_options[] = {
 		{"help", 0, 0, '?'},
 		{"device", 1, 0, 'D'},
@@ -1299,7 +1257,6 @@ int main(int argc, char *argv[])
 		{"quantisation", 1, 0, 'q'},
 		{"intraframe", 1, 0, 'i'},
 		{"number", 1, 0, 'n'},
-		{"verbose", 1, 0, 'v'},
 		{"location", 1, 0, 'l'},
 		{"flip", 1, 0, 'f'},
 		{"fps", 1, 0, 'F'},
@@ -1332,19 +1289,19 @@ int main(int argc, char *argv[])
 			num_parms = sscanf(optarg, "%d:%d", &height, &ovl_height);
             switch(num_parms) {
 			case EOF:
-				fprintf(stderr, "Height sscanf failed\n");
+				fprintf(stdout, "Height sscanf failed\n");
 				badparm=1;
 				break;
 			case 1: 
 				if (height > 1080 || height < 1) {
-					fprintf(stderr, "Height > than 1080 or < 1 %d\n", height);
+					fprintf(stdout, "Height > than 1080 or < 1 %d\n", height);
 					badparm=1;}
 				else {
 					ovl_height = height/2;}
 				break;
 			case 2:
 				if (height > 1080 || height < 1  || ovl_height > 1080 || ovl_height < 1) {
-					fprintf(stderr, "Height > than 1080 or < 1 %d:%d\n", height, ovl_height);
+					fprintf(stdout, "Height > than 1080 or < 1 %d:%d\n", height, ovl_height);
 					badparm=1;}
 				break;} 
 			break;
@@ -1357,14 +1314,14 @@ int main(int argc, char *argv[])
 				break;
 			case 1: 
 				if (height > 1920 || width < 1) {
-					fprintf(stderr, "Width > than 1920 or < 1 %d\n", width);
+					fprintf(stdout, "Width > than 1920 or < 1 %d\n", width);
 					badparm=1;}
 				else {
 					ovl_width = width/2;}
 				break;
 			case 2:
 				if (width > 1920 || width < 1  || ovl_width > 1920 || ovl_width < 1) {
-					fprintf(stderr, "Width > than 1920 or < 1 %d:%d\n", width, ovl_width);
+					fprintf(stdout, "Width > than 1920 or < 1 %d:%d\n", width, ovl_width);
 					badparm=1;}
 				break;} 
 			break;
@@ -1376,12 +1333,12 @@ int main(int argc, char *argv[])
 				badparm=1;
 				break;
 			case 1: 
-				fprintf(stderr, "Must have both X and Y location\n");
+				fprintf(stdout, "Must have both X and Y location\n");
 				badparm=1;
 				break;
 			case 2:
 				if (loc_y > 1080 || loc_y < 0  || loc_x > 1920 || loc_x < 0) {
-					fprintf(stderr, "X must be between  0 & 1920 Y must be between 0 & 1080 %d:%d\n", loc_x, loc_y);
+					fprintf(stdout, "X must be between  0 & 1920 Y must be between 0 & 1080 %d:%d\n", loc_x, loc_y);
 					badparm=1;}
 				break;} 
 			break;
@@ -1395,74 +1352,63 @@ int main(int argc, char *argv[])
 			case 4:
 				if (m_flip_h < 0 || m_flip_h > 1 || m_flip_v < 0 || m_flip_v > 1 ||
 					o_flip_h < 0 || o_flip_h > 1 || o_flip_v < 0 || o_flip_v > 1) {
-					fprintf(stderr, "flip flag must be 1 or 0 (true or false) %d.%d:%d.%d\n", m_flip_h, m_flip_v, o_flip_h, o_flip_v);
+					fprintf(stdout, "flip flag must be 1 or 0 (true or false) %d.%d:%d.%d\n", m_flip_h, m_flip_v, o_flip_h, o_flip_v);
 					badparm=1;}
 				break;
 			default:
-				fprintf(stderr, "flip does not have 4 params\n");
+				fprintf(stdout, "flip does not have 4 params\n");
 				badparm=1;
 				break;}
 			break;
 		case 'c':
 			camera = strtol(optarg, NULL, 0);
 			if (camera > 1 || camera < 0) {
-				fprintf(stderr, "Camera must be 0 or 1 %d\n", camera);
+				fprintf(stdout, "Camera must be 0 or 1 %d\n", camera);
 				badparm=1;}
 			break;
 		case 'q':
-			num_parms = sscanf(optarg, "%d:%d:%d", &initQ,&minQ, &maxQ);
+			num_parms = sscanf(optarg, "%d:%d:%d", &initQ, &minQ, &maxQ);
             switch(num_parms) {
 			case EOF:
-				fprintf(stderr, "filp sscanf failed\n");
+				fprintf(stderr, "quantisation sscanf failed\n");
 				badparm=1;
 				break;
 			case 1:
 				if (initQ > 40 || initQ < 20) {
-					fprintf(stderr, "quantisation parameters must be 20 to 40 %d\n", initQ);
+					fprintf(stdout, "quantisation parameters must be 20 to 40 %d\n", initQ);
 					badparm=1;}
 				break;
 			case 2:
 				if (initQ > 40 || initQ < 20 || minQ > 40 || minQ < 20) {
-					fprintf(stderr, "quantisation parameters must be 20 to 40 %d:%d\n", initQ, minQ);
+					fprintf(stdout, "quantisation parameters must be 20 to 40 %d:%d\n", initQ, minQ);
 					badparm=1;}
 				break;
 			case 3:
 				if (initQ > 40 || initQ < 20 || minQ > 40 || minQ < 20|| maxQ > 40 || maxQ < 20) {
-					fprintf(stderr, "quantisation parameters must be 20 to 40 %d:%d:%d\n", initQ, minQ, maxQ);
+					fprintf(stdout, "quantisation parameters must be 20 to 40 %d:%d:%d\n", initQ, minQ, maxQ);
 					badparm=1;}
 				break;}
 			break;
 		case 'n':
 			channel_num = strtol(optarg, NULL, 0);
 			if (channel_num > 2 || channel_num < 1) {
-				fprintf(stderr, "number of audio channels must be 1 or 2 %d\n", channel_num);
+				fprintf(stdout, "number of audio channels must be 1 or 2 %d\n", channel_num);
 				badparm=1;}
 			break;
 		case 'i':
 			intraframe = strtol(optarg, NULL, 0);
 			if (intraframe > 60) {
-				fprintf(stderr, "Intra frame rate should be < 60  %d\n", intraframe);
+				fprintf(stdout, "Intra frame rate should be < 60  %d\n", intraframe);
 				badparm=1;}
 			break;
 		case 'F':
 			fps = strtol(optarg, NULL, 0);
 			if (fps < 0 || fps > 31) {
-				fprintf(stderr, "frames per second must be > 0 and < 31 %d\n", fps);
+				fprintf(stdout, "frames per second must be > 0 and < 31 %d\n", fps);
 				badparm=1;}
-			break;
-		case 'v':
-			write_video_msg = write_audio_msg = strtol(optarg, NULL, 0);
-			if (write_video_msg > 3 || write_video_msg < 0) {
-				fprintf(stderr, "Verbose must be 0, 1, 2 or 3 %d\n", write_video_msg);
-				badparm=1;}
-			else
-				if (write_video_msg == 2) {
-					write_video_msg = 0;}
-				else if (write_video_msg == 1) {
-					write_audio_msg = 0;}
 			break;
 		default:
-			fprintf(stderr, "Try `%s --help' for more information.\n", command);
+			fprintf(stdout, "Try `%s --help' for more information.\n", command);
 			return 1;	
 		}
 	}
@@ -1475,7 +1421,7 @@ int main(int argc, char *argv[])
 		return 1;}
 		
 	if (ovl_height >= height || ovl_width >= width) {
-		fprintf(stderr, "overlay window must be smaller than main window\n");
+		fprintf(stdout, "overlay window must be smaller than main window\n");
 		return 1;}
 	if (loc_x >= (width-ovl_width) || loc_y >= height-ovl_height) {
 		fprintf(stderr, "Warning: The overlay window falls partly outside the main window and will not be visible\n");}
@@ -1486,11 +1432,24 @@ int main(int argc, char *argv[])
 		loc_x = 0;
 		loc_y = height-ovl_height;}
 
+	int i;
+	char *cp = argv[argc-1];
+    for (i=0;!(cp[i]==58)&&!(cp[i]==0);i++){}
+	if ((cp[i] == 58) && (i==4)) 
+		{
+		if (strncmp(cp,"file", i) && strncmp(cp,"rtmp", i))
+			{
+			fprintf(stdout, "Protocol is incorrect %s\n", cp);
+			return 1;
+			}
+		}		
 	err = snd_pcm_open(&handle, pcm_name, stream, 0);
 	if (err < 0) {
-		fprintf(stderr, "audio open error: %s\n", snd_strerror(err));
+		fprintf(stdout, "%s open error: %s\n", pcm_name, snd_strerror(err));
 		return 1;
 	}
+	
+	fprintf(stdout, "%s PiPIPflv started %dX%d Q=%d>%d<%d camera=%d\n", get_time_str(datestr), width, height, minQ, initQ, maxQ, camera);
 
 	rhwparams.format = DEFAULT_FORMAT;
 	rhwparams.rate = DEFAULT_SPEED;
@@ -1504,7 +1463,7 @@ int main(int argc, char *argv[])
 
 	if (optind > argc - 1)  
 		{
-	fprintf(stderr, "Must have file or stream address\n");
+	    fprintf(stdout, "Must have file or stream address\n");
 		} 
 	else 
 		{
