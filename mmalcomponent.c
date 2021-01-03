@@ -236,12 +236,11 @@ MMAL_STATUS_T create_hvs_component(RASPIVID_STATE *state)
 {
       
    MMAL_COMPONENT_T *hvs = 0; 
-   MMAL_PORT_T *hvs_main_input = NULL, *hvs_ovl_input, *hvs_output = NULL;
+   MMAL_PORT_T *hvs_main_input = NULL, *hvs_ovl_input, *hvs_txt_input, *hvs_output = NULL;
    MMAL_STATUS_T status;
    MMAL_POOL_T *pool;
    int opacity = 255;
-   
-        
+           
    status = mmal_component_create("vc.ril.hvs", &hvs);
    
    if (status != MMAL_SUCCESS)
@@ -259,6 +258,7 @@ MMAL_STATUS_T create_hvs_component(RASPIVID_STATE *state)
 
    hvs_main_input = hvs->input[0];
    hvs_ovl_input = hvs->input[1];
+   hvs_txt_input = hvs->input[2];
    hvs_output = hvs->output[0];
   
    mmal_format_copy(hvs_main_input->format, state->camera_component->output[MMAL_CAMERA_VIDEO_PORT]->format); 
@@ -276,14 +276,6 @@ MMAL_STATUS_T create_hvs_component(RASPIVID_STATE *state)
    if (status != MMAL_SUCCESS)
    {
       vcos_log_error("Unable to set displayregion hvs main input");
-      goto error;
-   }
-  
-   param.set = MMAL_DISPLAY_SET_DUMMY;  
-   status = mmal_port_parameter_get(hvs_main_input, &param.hdr);
-   if (status != MMAL_SUCCESS)
-   {
-      vcos_log_error("Unable to get displayregion hvs main input");
       goto error;
    }
     
@@ -311,21 +303,48 @@ MMAL_STATUS_T create_hvs_component(RASPIVID_STATE *state)
       vcos_log_error("Unable to set displayregion hvs overlay input");
       goto error;
    }
-   
-   param.set = MMAL_DISPLAY_SET_DUMMY;  
-   status = mmal_port_parameter_get(hvs_ovl_input, &param.hdr);
-   if (status != MMAL_SUCCESS)
-   {
-      vcos_log_error("Unable to get displayregion hvs main input");
-      goto error;
-   }
-   
+    
    // Commit the port changes to the hvs ovl input port
    status = mmal_port_format_commit(hvs_ovl_input);
 
    if (status != MMAL_SUCCESS)
    {
       vcos_log_error("Unable to set format on hvs ovl input port");
+      goto error;
+   }
+   
+   // text overlay
+   param.set =  MMAL_DISPLAY_SET_FULLSCREEN | MMAL_DISPLAY_SET_DEST_RECT | MMAL_DISPLAY_SET_LAYER | MMAL_DISPLAY_SET_ALPHA;
+   param.fullscreen = MMAL_FALSE;
+   param.dest_rect.x = 0;  
+   param.dest_rect.y = 50;
+   param.dest_rect.width = 256;
+   param.dest_rect.height = 96;
+   param.layer=  2;
+   param.alpha = opacity;
+      
+   status = mmal_port_parameter_set(hvs_txt_input, &param.hdr);
+   if (status != MMAL_SUCCESS)
+   {
+      vcos_log_error("Unable to set displayregion hvs text input");
+      goto error;
+   }
+   
+   // Commit the port changes to the hvs text input port
+   hvs_txt_input->format->encoding = MMAL_ENCODING_BGRA;
+   hvs_txt_input->format->es->video.width = VCOS_ALIGN_UP(96, 32);
+   hvs_txt_input->format->es->video.height = VCOS_ALIGN_UP(32, 16);
+   hvs_txt_input->format->es->video.crop.x = 0;
+   hvs_txt_input->format->es->video.crop.y = 0;
+   hvs_txt_input->format->es->video.crop.width = 0;
+   hvs_txt_input->format->es->video.crop.height = 0;
+  
+   // Commit the port changes to the hvs text input port
+   status = mmal_port_format_commit(hvs_txt_input);
+
+   if (status != MMAL_SUCCESS)
+   {
+      vcos_log_error("Unable to set format on hvs ovl text port");
       goto error;
    }
    
@@ -347,6 +366,8 @@ MMAL_STATUS_T create_hvs_component(RASPIVID_STATE *state)
       vcos_log_error("Unable to set format on hvs output port");
       goto error;
    }
+   
+   
    
    //  Enable component
    status = mmal_component_enable(hvs);
