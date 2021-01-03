@@ -20,4 +20,5 @@ Hardware required:
 * 2 Camera Raspberry Pi Compute Module 
 	(with carrier board - Raspberry CM3 for CM4 I/O board, StereoPi or WaveShare POE board)
 * Adafruit I2S MEMS Microphone (SPH0645LM4H)
+* SixFab Raspberry Pi 3G/4G & LTE Base HAT (for Cellular modem and GPS)
 
