@@ -31,12 +31,13 @@ add_definitions("-DGIT_TAINTED=${GIT_TAINTED}")
  
 set (PIPCAM_SOURCES
    raspiCamUtilities.c
-   mmalcomponent.c)
+   mmalcomponent.c
+   GPSUtil.c)
    
 add_executable(PiPIPflv ${PIPCAM_SOURCES} PiPIPflv.c)
 
 set (MMAL_LIBS mmal_core mmal_util mmal_vc_client)
 
-target_link_libraries(PiPIPflv pthread asound avformat avcodec avutil swresample ${MMAL_LIBS} vcos bcm_host bcm2835)
+target_link_libraries(PiPIPflv pthread asound avformat avcodec avutil swresample ${MMAL_LIBS} vcos bcm_host bcm2835 cairo)
 
 install(TARGETS PiPIPflv RUNTIME DESTINATION bin)

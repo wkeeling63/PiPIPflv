@@ -56,7 +56,7 @@
 
 #include "raspiCamUtilities.h"
 #include "mmalcomponent.h"
-
+#include "GPSUtil.h"
 #ifndef LLONG_MAX
 #define LLONG_MAX    9223372036854775807LL
 #endif
@@ -120,6 +120,8 @@ AVAudioFifo *fifo = NULL;
 AVFrame *infrm, *outfrm;
 int64_t audio_samples=0; 
 char datestr[32];
+
+MMAL_POOL_T *pool_in;
 
 static void prg_exit(int code);
 
@@ -427,6 +429,10 @@ int close_avapi(void)
 			}
 		} 
 	return 0;
+}
+static void hvs_input_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
+{
+   mmal_buffer_header_release(buffer);
 }
 static void encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
 {
@@ -878,6 +884,7 @@ MMAL_STATUS_T setup_components(RASPIVID_STATE *state)
 	MMAL_PORT_T *encoder_output_port = NULL;
 	MMAL_PORT_T *hvs_main_input_port = NULL;
 	MMAL_PORT_T *hvs_ovl_input_port = NULL;
+	MMAL_PORT_T *hvs_text_input_port = NULL;
 	MMAL_PORT_T *hvs_output_port = NULL;
    
     // Setup for sensor specific parameters, only set W/H settings if zero on entry
@@ -937,9 +944,12 @@ MMAL_STATUS_T setup_components(RASPIVID_STATE *state)
 
 	hvs_main_input_port = state->hvs_component->input[0];
     hvs_ovl_input_port  = state->hvs_component->input[1];
+    hvs_text_input_port  = state->hvs_component->input[2];
     hvs_output_port     = state->hvs_component->output[0];
     encoder_input_port  = state->encoder_component->input[0];
     encoder_output_port = state->encoder_component->output[0];
+    
+    fprintf(stdout, "num %d size %d\n", state->hvs_component->input[2]->buffer_num_min, state->hvs_component->input[2]->buffer_size_min);
 
     if ((status = connect_ports(camera_video_port, hvs_main_input_port, &state->hvs_main_connection)) != MMAL_SUCCESS)
     {
@@ -961,6 +971,16 @@ MMAL_STATUS_T setup_components(RASPIVID_STATE *state)
 		state->encoder_connection = NULL;
 		return -128;
 	} 
+	
+	hvs_text_input_port->buffer_num = hvs_text_input_port->buffer_num_min;
+	hvs_text_input_port->buffer_size = hvs_text_input_port->buffer_size_min;
+	pool_in = mmal_pool_create(hvs_text_input_port->buffer_num, hvs_text_input_port->buffer_size);
+
+	if ((status = mmal_port_enable(hvs_text_input_port, hvs_input_callback)) != MMAL_SUCCESS)
+	{
+		vcos_log_error("%s: Failed to enable hvs text input", __func__); 
+		return -128;
+	} 	
 	return 0;
 }
 
@@ -983,6 +1003,8 @@ void close_components(RASPIVID_STATE *state)
 		mmal_connection_destroy(state->hvs_main_connection);
 	if (state->hvs_ovl_connection)
 		mmal_connection_destroy(state->hvs_ovl_connection);
+	if (state->hvs_component->input[2]->is_enabled)
+		mmal_port_disable(state->hvs_component->input[2]);
 
     // Disable and destroy components 
 	if (state->encoder_component)
@@ -1008,20 +1030,20 @@ void close_components(RASPIVID_STATE *state)
 static void close_it(void)  
 {
 	fprintf(stdout, "\n");
-	fprintf(stdout, "%s PiPIPflv ending\n", get_time_str(datestr));
-	sem_t *psem=pstate->callback_data.mutex;
+	sem_t *psem=pstate->callback_data.mutex;	
 	close_components(pstate);
 	close_avapi();
 	sem_destroy(psem);
 	if (gpio_init) {
-	bcm2835_gpio_write(GPIO_LED, LOW);
-	bcm2835_close();}
+		bcm2835_gpio_write(GPIO_LED, LOW);
+		bcm2835_close();}
 	if (handle) {
 		snd_pcm_close(handle);
 		handle = NULL;}
 	free(audiobuf);
 	free(rlbufs);
 	snd_config_update_free_global();
+	fprintf(stdout, "%s PiPIPflv ending\n", get_time_str(datestr));
 }
 static void prg_exit(int code)  
 {
@@ -1103,7 +1125,34 @@ static void capture(char *orig_name)
 	
 	// init components 
 	status = setup_components(&state);
-		
+	
+	int a=888;
+	char buffer[8];
+	sprintf(buffer, "%3d mph", a);  
+	struct timeval stop, start;
+    gettimeofday(&start, NULL);
+	cairo_surface_t *image=cairo_text(buffer);
+	gettimeofday(&stop, NULL);
+    printf("took %lu us\n", (stop.tv_sec - start.tv_sec) * 1000000 + stop.tv_usec - start.tv_usec); 
+	
+	//get image size info
+	MMAL_BUFFER_HEADER_T *buffer_header;
+	if ((buffer_header = mmal_queue_get(pool_in->queue)) != NULL)
+	{
+		printf("setting buffer header for text\n");
+		buffer_header->data=cairo_image_surface_get_data(image);
+		buffer_header->cmd=0;
+		buffer_header->offset=0;
+		buffer_header->dts=buffer_header->pts=MMAL_TIME_UNKNOWN; 
+		buffer_header->flags=MMAL_BUFFER_HEADER_FLAG_FRAME_END;
+		buffer_header->length=buffer_header->alloc_size=cairo_image_surface_get_height(image)*cairo_image_surface_get_stride(image);
+		printf("buffer header %d %d %p\n", buffer_header->length, buffer_header->alloc_size, buffer_header->data);	
+		int satus=mmal_port_send_buffer(state.hvs_component->input[2], buffer_header);
+		if (status) printf("buffer send failed\n");
+		printf("after send buffer header for text %d\n", status);
+	} 
+	
+	
 	state.callback_data.pstate = &state;
 	state.callback_data.abort_ptr = &abort_flg;
 	state.callback_data.stime = &start_time;
@@ -1230,6 +1279,8 @@ static void capture(char *orig_name)
 			}				
 		}
 	bcm2835_gpio_write(GPIO_LED, LOW);
+
+//	cairo_surface_destroy(image);
 		
 	mmal_port_parameter_set_boolean(state.camera_component->output[MMAL_CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
 	mmal_port_parameter_set_boolean(state.camera2_component->output[MMAL_CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
