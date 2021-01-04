@@ -26,6 +26,7 @@
 
 #include "raspiCamUtilities.h"
 #include "mmalcomponent.h"
+#include "GPSUtil.h"
 
 #include <stdbool.h>
 
@@ -316,10 +317,10 @@ MMAL_STATUS_T create_hvs_component(RASPIVID_STATE *state)
    // text overlay
    param.set =  MMAL_DISPLAY_SET_FULLSCREEN | MMAL_DISPLAY_SET_DEST_RECT | MMAL_DISPLAY_SET_LAYER | MMAL_DISPLAY_SET_ALPHA;
    param.fullscreen = MMAL_FALSE;
-   param.dest_rect.x = 0;  
-   param.dest_rect.y = 50;
-   param.dest_rect.width = 256;
-   param.dest_rect.height = 96;
+   param.dest_rect.x = 0;
+   param.dest_rect.y = state->common_settings.height-TEXTH;
+   param.dest_rect.width = TEXTW;
+   param.dest_rect.height = TEXTH;
    param.layer=  2;
    param.alpha = opacity;
       
@@ -332,8 +333,8 @@ MMAL_STATUS_T create_hvs_component(RASPIVID_STATE *state)
    
    // Commit the port changes to the hvs text input port
    hvs_txt_input->format->encoding = MMAL_ENCODING_BGRA;
-   hvs_txt_input->format->es->video.width = VCOS_ALIGN_UP(96, 32);
-   hvs_txt_input->format->es->video.height = VCOS_ALIGN_UP(32, 16);
+   hvs_txt_input->format->es->video.width = TEXTW;
+   hvs_txt_input->format->es->video.height = TEXTH;
    hvs_txt_input->format->es->video.crop.x = 0;
    hvs_txt_input->format->es->video.crop.y = 0;
    hvs_txt_input->format->es->video.crop.width = 0;
