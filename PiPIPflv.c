@@ -125,8 +125,6 @@ AVFrame *infrm, *outfrm;
 int64_t audio_samples=0; 
 char datestr[32];
 
-// MMAL_POOL_T *pool_in;
-
 static void prg_exit(int code);
 
 void *gps_thread(void *argp)
@@ -1245,9 +1243,7 @@ static void capture(char *orig_name)
 
 		if (last_speed != gps_data.speed)
 			{
-//			MMAL_POOL_T *textin = state.hvs_textin_pool;   //state->hvs_textin_pool
 			if ((buffer_header = mmal_queue_get(state.hvs_textin_pool->queue)) != NULL)
-//			if ((buffer_header = mmal_queue_get(pool_in)) != NULL)
 				{
 				if (gps_data.speed < 0)
 					{
