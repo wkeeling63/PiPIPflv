@@ -108,6 +108,10 @@ int64_t start_time, write_target_time, write_variance = 0, pbrec_count = LLONG_M
 
 char file_name[128];
 char pcm_name[17];
+
+GPS_T gps_data;
+pthread_t tid;
+
 RASPIVID_STATE *pstate = NULL;
 
 AVFormatContext *flv_frmtctx = NULL;
@@ -121,9 +125,25 @@ AVFrame *infrm, *outfrm;
 int64_t audio_samples=0; 
 char datestr[32];
 
-MMAL_POOL_T *pool_in;
+// MMAL_POOL_T *pool_in;
 
 static void prg_exit(int code);
+
+void *gps_thread(void *argp)
+{
+   GPS_T *gps = (GPS_T *)argp;
+   gps_data.active=1;
+   gps_data.speed=-1; 
+  
+   open_gps(gps);
+    
+   while (gps->active) 
+      {  
+      read_gps(gps);
+      }
+ 
+   close_gps(gps);
+}
 
 static char* get_time_str(char* time_str)
 {
@@ -376,12 +396,10 @@ int init_avapi(char *filename)
 
 	return 0; 
 }
-//int close_avapi(char *filename)
+
 int close_avapi(void)
 {
 	int status;
-
-//	if (write_audio_msg || write_video_msg) {fprintf(stderr, "\n");}
 
 	if (outfrm) {av_frame_free(&outfrm);}
 	if (infrm) {av_frame_free(&infrm);}
@@ -432,7 +450,11 @@ int close_avapi(void)
 }
 static void hvs_input_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
 {
-   mmal_buffer_header_release(buffer);
+	if (buffer->user_data)
+		{
+		cairo_surface_destroy(buffer->user_data);
+		}
+	mmal_buffer_header_release(buffer);
 }
 static void encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
 {
@@ -949,8 +971,6 @@ MMAL_STATUS_T setup_components(RASPIVID_STATE *state)
     encoder_input_port  = state->encoder_component->input[0];
     encoder_output_port = state->encoder_component->output[0];
     
-    fprintf(stdout, "num %d size %d\n", state->hvs_component->input[2]->buffer_num_min, state->hvs_component->input[2]->buffer_size_min);
-
     if ((status = connect_ports(camera_video_port, hvs_main_input_port, &state->hvs_main_connection)) != MMAL_SUCCESS)
     {
 		vcos_log_error("%s: Failed to connect camera video port to hvs input", __func__); 
@@ -972,9 +992,10 @@ MMAL_STATUS_T setup_components(RASPIVID_STATE *state)
 		return -128;
 	} 
 	
-	hvs_text_input_port->buffer_num = hvs_text_input_port->buffer_num_min;
+	hvs_text_input_port->buffer_num = hvs_text_input_port->buffer_num_min+1;
 	hvs_text_input_port->buffer_size = hvs_text_input_port->buffer_size_min;
-	pool_in = mmal_pool_create(hvs_text_input_port->buffer_num, hvs_text_input_port->buffer_size);
+//	pool_in = mmal_pool_create(hvs_text_input_port->buffer_num, hvs_text_input_port->buffer_size);
+	state->hvs_textin_pool = mmal_pool_create(hvs_text_input_port->buffer_num, hvs_text_input_port->buffer_size);
 
 	if ((status = mmal_port_enable(hvs_text_input_port, hvs_input_callback)) != MMAL_SUCCESS)
 	{
@@ -1029,7 +1050,11 @@ void close_components(RASPIVID_STATE *state)
  */
 static void close_it(void)  
 {
-	fprintf(stdout, "\n");
+//	fprintf(stdout, "\n");
+	// stop gps thread
+	gps_data.active=0;
+	pthread_join(tid, NULL); 
+	
 	sem_t *psem=pstate->callback_data.mutex;	
 	close_components(pstate);
 	close_avapi();
@@ -1073,6 +1098,9 @@ static void capture(char *orig_name)
 	size_t vsize;
 	RASPIVID_STATE state;
 	pstate = &state;
+	
+	// start gps thread
+	pthread_create(&tid, NULL, gps_thread, (void *)&gps_data);
 
 	AVPacket video_packet;
 	av_init_packet(&video_packet);
@@ -1123,35 +1151,8 @@ static void capture(char *orig_name)
 	state.quantisationMin = minQ;
 	state.quantisationMax = maxQ;
 	
-	// init components 
+	// init MMAL components 
 	status = setup_components(&state);
-	
-	int a=888;
-	char buffer[8];
-	sprintf(buffer, "%3d mph", a);  
-	struct timeval stop, start;
-    gettimeofday(&start, NULL);
-	cairo_surface_t *image=cairo_text(buffer);
-	gettimeofday(&stop, NULL);
-    printf("took %lu us\n", (stop.tv_sec - start.tv_sec) * 1000000 + stop.tv_usec - start.tv_usec); 
-	
-	//get image size info
-	MMAL_BUFFER_HEADER_T *buffer_header;
-	if ((buffer_header = mmal_queue_get(pool_in->queue)) != NULL)
-	{
-		printf("setting buffer header for text\n");
-		buffer_header->data=cairo_image_surface_get_data(image);
-		buffer_header->cmd=0;
-		buffer_header->offset=0;
-		buffer_header->dts=buffer_header->pts=MMAL_TIME_UNKNOWN; 
-		buffer_header->flags=MMAL_BUFFER_HEADER_FLAG_FRAME_END;
-		buffer_header->length=buffer_header->alloc_size=cairo_image_surface_get_height(image)*cairo_image_surface_get_stride(image);
-		printf("buffer header %d %d %p\n", buffer_header->length, buffer_header->alloc_size, buffer_header->data);	
-		int satus=mmal_port_send_buffer(state.hvs_component->input[2], buffer_header);
-		if (status) printf("buffer send failed\n");
-		printf("after send buffer header for text %d\n", status);
-	} 
-	
 	
 	state.callback_data.pstate = &state;
 	state.callback_data.abort_ptr = &abort_flg;
@@ -1214,6 +1215,19 @@ static void capture(char *orig_name)
 	bcm2835_gpio_write(GPIO_LED, HIGH);
 
 	int64_t stop_time;
+	
+	int last_speed=-2, speed, font_size=state.common_settings.height/21, font_space;
+	MMAL_BUFFER_HEADER_T *buffer_header=NULL;
+	cairo_surface_t *temp_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, TEXTW, TEXTH);
+	cairo_t *temp_context =  cairo_create(temp_surface);
+	cairo_rectangle(temp_context, 0, 0, TEXTW, TEXTH);
+	cairo_select_font_face(temp_context, "cairo:serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+	cairo_set_font_size(temp_context, font_size);
+	cairo_text_extents_t extents;
+	cairo_text_extents(temp_context, "888 mph", &extents);
+	font_space=TEXTW-extents.x_advance;
+	cairo_destroy(temp_context);
+	cairo_surface_destroy(temp_surface);
 
 	if (timelimit)
 		{
@@ -1228,6 +1242,31 @@ static void capture(char *orig_name)
 		{
 		size_t c = (count <= (int64_t)chunk_bytes) ? (size_t)count : chunk_bytes;
 		size_t f = c * 8 / bits_per_frame;
+
+		if (last_speed != gps_data.speed)
+			{
+//			MMAL_POOL_T *textin = state.hvs_textin_pool;   //state->hvs_textin_pool
+			if ((buffer_header = mmal_queue_get(state.hvs_textin_pool->queue)) != NULL)
+//			if ((buffer_header = mmal_queue_get(pool_in)) != NULL)
+				{
+				if (gps_data.speed < 0)
+					{
+					buffer_header->length=buffer_header->alloc_size=0;
+					buffer_header->user_data=NULL;
+					} 
+				else
+					{
+					cairo_surface_t *image=cairo_text(gps_data.speed, font_size, font_space);	
+					buffer_header->data=cairo_image_surface_get_data(image);
+					buffer_header->length=buffer_header->alloc_size=
+						cairo_image_surface_get_height(image)*cairo_image_surface_get_stride(image);
+					} 
+				buffer_header->cmd=buffer_header->offset=0;
+				int satus=mmal_port_send_buffer(state.hvs_component->input[2], buffer_header);
+				if (status) printf("buffer send of text overlay failed\n");
+				}
+			last_speed=gps_data.speed;
+			}
 
 		if (pcm_read(audiobuf, bufs, f) != f)   //? if
 			break;
@@ -1245,7 +1284,7 @@ static void capture(char *orig_name)
 				{
 				param.value--;
 				atmaxQ = MMAL_FALSE;
-				fprintf(stdout, "%s Quantization %d\r", get_time_str(datestr), param.value);
+				fprintf(stdout, "%s Quantization %d\n", get_time_str(datestr), param.value);
 				status = mmal_port_parameter_set(state.encoder_component->output[0], &param.hdr);
 				if (status != MMAL_SUCCESS) {vcos_log_error("Unable to reset QP");}
 				write_variance = 0;
@@ -1255,7 +1294,7 @@ static void capture(char *orig_name)
 				if (write_variance > 0 && param.value < state.quantisationMax)
 					{
 					param.value++;
-					fprintf(stdout, "%s Quantization %d\r", get_time_str(datestr), param.value);
+					fprintf(stdout, "%s Quantization %d\n", get_time_str(datestr), param.value);
 					status = mmal_port_parameter_set(state.encoder_component->output[0], &param.hdr);
 					if (status != MMAL_SUCCESS) {vcos_log_error("Unable to reset QP");}
 					write_variance = 0;
@@ -1264,7 +1303,7 @@ static void capture(char *orig_name)
 					{
 					if (param.value == state.quantisationMax && !(atmaxQ))
 						{
-						fprintf(stdout, "%s At max Quantization %d\r", get_time_str(datestr), param.value);	
+						fprintf(stdout, "%s At max Quantization %d\n", get_time_str(datestr), param.value);	
 						atmaxQ = MMAL_TRUE;
 						}
 					write_variance = 0;
@@ -1279,9 +1318,7 @@ static void capture(char *orig_name)
 			}				
 		}
 	bcm2835_gpio_write(GPIO_LED, LOW);
-
-//	cairo_surface_destroy(image);
-		
+	
 	mmal_port_parameter_set_boolean(state.camera_component->output[MMAL_CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
 	mmal_port_parameter_set_boolean(state.camera2_component->output[MMAL_CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
 	
@@ -1515,6 +1552,7 @@ int main(int argc, char *argv[])
 	if (optind > argc - 1)  
 		{
 	    fprintf(stdout, "Must have file or stream address\n");
+	    return 1;
 		} 
 	else 
 		{

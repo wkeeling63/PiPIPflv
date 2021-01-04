@@ -7,7 +7,7 @@ int open_gps(GPS_T *gps)
    options.c_cflag = BAUDRATE | CRTSCTS | CS8 | CLOCAL | CREAD;
    options.c_iflag = IGNPAR | ICRNL;
    options.c_lflag = ICANON;
-   options.c_cc[VEOF]     = 4;     // Ctrl-d 
+   options.c_cc[VEOF]     = 4;     // Ctrl-d  
    options.c_cc[VMIN]     = 1; 
     
    gps->fd_data = open(GPSDATA, O_RDWR | O_NOCTTY ); 
@@ -81,33 +81,40 @@ void read_gps(GPS_T *gps)
          }
          if (buf[index[2]]== 'A')
             {
-            int spd=0;
-            sscanf(buf+index[7], "%d", &spd);
-            gps->speed=spd*1.15078;   
+            float fspd=0;
+            sscanf(buf+index[7], "%f", &fspd);
+            gps->speed=fspd*1.15078;   
             }
          else
             {
-            gps->speed=0;
+            gps->speed=-1;
             }
-      }
+      } 
       
    return;
 }
 
-cairo_surface_t* cairo_text(char *text)
+cairo_surface_t* cairo_text(int speed, int font_size, int font_space)
 {
-   int width = 96, height = 32;
-   cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+   char buffer[8];
+   sprintf(buffer, "%3d mph", speed); 
+   cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, TEXTW, TEXTH);
+   cairo_status_t status = cairo_surface_status (surface);
+   if (status) 
+      {
+      fprintf(stderr, "surface status %s %d\n", cairo_status_to_string (status), status);
+      }
    cairo_t *cr =  cairo_create(surface);
-   cairo_rectangle(cr, 0, 0, width, height);
+   cairo_rectangle(cr, 0, 0, TEXTW, TEXTH);
    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.0);
    cairo_fill(cr);
    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
    cairo_select_font_face(cr, "cairo:serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-   cairo_set_font_size(cr, 18);
-   cairo_move_to(cr, 0.0, 20.0);
+   cairo_set_font_size(cr, font_size);
    cairo_text_extents_t extents;
-   cairo_text_extents(cr, text, &extents);
-   cairo_show_text(cr, text);
+   cairo_text_extents(cr, buffer, &extents);
+   cairo_move_to(cr, TEXTW-extents.x_advance-font_space, TEXTH-(extents.height+extents.y_bearing));
+   cairo_show_text(cr, buffer);
+   cairo_destroy(cr);
    return(surface);
 }

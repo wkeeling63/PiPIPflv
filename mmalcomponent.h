@@ -77,6 +77,7 @@ struct RASPIVID_STATE_S
 
    MMAL_POOL_T *encoder_pool; /// Pointer to the pool of buffers used by encoder output port
    MMAL_POOL_T *hvs_pool; /// Pointer to the pool of buffers used by hvs output port
+   MMAL_POOL_T *hvs_textin_pool; /// Pointer to the input pool of buffers for text overlay
 
    PORT_USERDATA callback_data;        /// Used to move data to the encoder callback
 

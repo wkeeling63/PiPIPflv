@@ -11,6 +11,10 @@
 #define BAUDRATE B115200            
 #define GPSDATA "/dev/ttyUSB1"
 #define GPSCNTL "/dev/ttyUSB2"
+// TEXTW must be 32 aligned
+#define TEXTW 256
+// TEXTH must be 16 aligned
+#define TEXTH 64
 
 typedef struct GPS_S 
    {
@@ -23,6 +27,6 @@ typedef struct GPS_S
 int open_gps(GPS_T *gps);
 int close_gps(GPS_T *gps);
 void read_gps(GPS_T *gps);
-cairo_surface_t* cairo_text(char *text);
+cairo_surface_t* cairo_text(int, int, int);
 
 #endif /* GPSUTIL_H_ */
