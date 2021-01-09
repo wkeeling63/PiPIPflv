@@ -12,6 +12,7 @@ and both streams are added to flash video container by FFMPEG api.
 
 Install: 
 cmake .
+
 make 
 
 Software required:
