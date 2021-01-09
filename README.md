@@ -11,7 +11,9 @@ and both streams are added to flash video container by FFMPEG api.
 
 
 Install: 
+
 	cmake .
+	
 	make 
 
 Software required:
@@ -20,6 +22,7 @@ Software required:
 * bcm2835 library http://www.airspayce.com/mikem/bcm2835/index.html (tested with version 1.68)
 * Cairo library sudo apt-get install libcairo2-dev
 * cmake for build sudo apt-get install cmake
+
   	(to install all needed software other than bcm2835 "sudo apt-get install cmake ibavformat-dev libasound2-dev libcairo2-dev")
 
 Hardware required:
