@@ -35,8 +35,7 @@ Hardware required:
 	
 	with CM4 you must compile my_loader.c with fe203000.i2s values (same as Pi4) in place of 3f203000.i2s
 	
-	PiPIPflv expects .asoundrc to be setup as pre the above page (after Nov 2020 Pi OS will remove .asoundrc in the user home will be removed when desktop GUI start the work around for this is a golbal ALSA configuration /etc/asound.conf with the same config as .asoundrc)
-
+	PiPIPflv expects .asoundrc to be setup as pre the above page (after Nov 2020 Pi OS will remove .asoundrc in the user home will be removed when desktop GUI start the work around for this is a golbal ALSA configuration /etc/asound.conf with the same config as .asoundrc
 	
 * SixFab Raspberry Pi 3G/4G & LTE Base HAT (for Cellular modem and GPS) 
 
