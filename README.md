@@ -1,4 +1,7 @@
-this is a dead project -- work has been moved racecam project
+**this is a dead project -- work has been moved racecam project
+
+
+
 
 Purpose: To build and front and rear facing live stream race camera
 
